@@ -25,8 +25,10 @@ export function mulberry32(seed) {
 const ZONE_NAME = { 0: 'the field', 1: 'the pitcher', 2: 'the catcher', 3: 'first base', 4: 'second base', 5: 'third base', 6: 'shortstop', 7: 'left field', 8: 'center field', 9: 'right field' };
 const ORD = ['', 'first', 'second', 'third'];
 
+export const DEFAULT_STRAT = { steal: 1, bunt: 'default', ibb: 'default', infieldIn: 'default', hook: 1 };
+
 export function newBox() {
-  return { pa: 0, ab: 0, h: 0, d: 0, t: 0, hr: 0, bb: 0, k: 0, hbp: 0, r: 0, rbi: 0, sb: 0, cs: 0, sf: 0, gdp: 0 };
+  return { pa: 0, ab: 0, h: 0, d: 0, t: 0, hr: 0, bb: 0, k: 0, hbp: 0, r: 0, rbi: 0, sb: 0, cs: 0, sf: 0, gdp: 0, sh: 0, ibb: 0 };
 }
 function newPBox() { return { bf: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0, hr: 0, pc: 0, hbp: 0, inn: 0, half: 0 }; }
 
@@ -92,6 +94,9 @@ export class Sim {
     this.availBull = [away.bullpen.slice(), home.bullpen.slice()];
     this.availBench = [away.bench.slice(), home.bench.slice()];
     this.events = [];
+    this.strat = [0, 1].map(i => Object.assign({}, DEFAULT_STRAT, this.opts.strat?.[i] || {}));
+    this.manual = [{}, {}];       // one-shot calls queued by a human for the next plate appearance
+    this.lgWoba = 0; for (let i = 0; i < 8; i++) this.lgWoba += WOBA_W[i] * this.env.bat[i];
   }
 
   // ---------------------------------------------------------------- box helpers
@@ -223,7 +228,7 @@ export class Sim {
     const lineupLost = !st.lineup[ti].some(x => x.p === p) && !this.dh;
     if (lineupLost) { pull = true; why = 'pinch-hit for'; }
     const scriptMode = this.opts.mgr[ti] === 'script';
-    const slack = scriptMode ? 1.45 : 1;
+    const slack = (scriptMode ? 1.45 : 1) * (this.strat[ti].hook || 1);
     if (starter) {
       const limit = E * 1.03 * slack + 0.5;
       if (b.bf >= limit) { pull = true; why = 'tiring'; }
@@ -330,6 +335,10 @@ export class Sim {
       w *= plat[i];
       if (i >= 3 && i <= 6) w *= this.pf[i - 3];
       if (fat) { if (i === 0 || i === 7) w /= (1 + fat * 0.5); else w *= (1 + fat); }
+      if (this.curCall) {
+        if (this.curCall.hitrun && i === 0) w *= 0.82;
+        if (this.curCall.infieldIn && i === 3) w *= 1.07;
+      }
       out[i] = w; tot += w;
     }
     for (let i = 0; i < 8; i++) out[i] /= tot;
@@ -401,6 +410,136 @@ export class Sim {
       else v += String(s);
     }
     return v;
+  }
+
+  // ---------------------------------------------------------------- strategy
+  stealMult(ti) {
+    const c = this.curCall;
+    let m = this.strat[ti].steal;
+    if (c && c.hold) m *= 0.25;
+    return m;
+  }
+
+  /** Decide this PA's strategy calls: human one-shot calls win, then the team's auto strategy. */
+  pickCalls(ti, fi, batter, pitcher) {
+    const st = this.st, bm = this.bmask();
+    const call = { bunt: false, steal: false, hitrun: false, hold: false, ibb: false, infieldIn: false, squeeze: false };
+    const mo = this.manual[ti], md = this.manual[fi];
+    Object.assign(call, { bunt: !!mo.bunt, steal: !!mo.steal, hitrun: !!mo.hitrun, hold: !!md.hold, ibb: !!md.ibb, infieldIn: !!md.infieldIn });
+    const rules = { first: !!(bm & 1), second: !!(bm & 2), third: !!(bm & 4) };
+    const nextB = st.lineup[ti][(st.slot[ti] + 1) % 9];
+    if (this.opts.mgr[fi] !== 'manual' && !md.ibb && this.strat[fi].ibb === 'situational') {
+      const diff = this.scoreDiff(fi);
+      const strong = batter.p.bat.woba >= this.lgWoba + 0.045 && nextB.p.bat.woba <= batter.p.bat.woba - 0.03;
+      if (strong && !rules.first && (rules.second || rules.third) && st.outs < 2 && st.inning >= 7 && diff <= 1 && diff >= -3 && batter.pos !== 1) call.ibb = true;
+    }
+    if (this.opts.mgr[fi] !== 'manual' && !md.infieldIn && this.strat[fi].infieldIn === 'situational') {
+      const diff = this.scoreDiff(fi);
+      if (rules.third && st.outs < 2 && st.inning >= 7 && diff <= 0 && diff >= -1) call.infieldIn = true;
+    }
+    if (this.opts.mgr[ti] !== 'manual' && !mo.bunt && this.strat[ti].bunt === 'situational') {
+      const weak = batter.pos === 1 || batter.p.bat.woba < this.lgWoba - 0.04;
+      const diff = this.scoreDiff(ti);
+      if (weak && st.outs === 0 && (rules.first || rules.second) && !rules.third && diff <= 1 && diff >= -2 && this.rng() < 0.7) call.bunt = true;
+    }
+    if (call.bunt && batter.pos === 1 && false) call.bunt = true;
+    return call;
+  }
+
+  /** Alter a sampled runner-advance vector for hit-and-run / infield-in calls. */
+  tweakVec(vec, evName, typ, bm, outs, call) {
+    if (!call) return vec;
+    let v = vec.split('');
+    if (call.hitrun && (bm & 1)) {
+      if (evName === 'OUT' && typ === 'G' && v[1] === '0' && v[0] === '0') { v[1] = '2'; }         // no double play: runner takes second
+      else if (evName === '1B' && v[1] === '2' && this.rng() < 0.45) v[1] = '3';
+      else if (evName === 'K' && this.rng() < 0.15) v[1] = '0';                                        // caught stealing on strike three
+    }
+    if (call.infieldIn && (bm & 4) && evName === 'OUT' && typ === 'G' && v[3] === '3' && this.rng() < 0.28) v[3] = '4';   // ... but in this case, runner beats throw
+    else if (call.infieldIn && (bm & 4) && evName === 'OUT' && typ === 'G' && v[3] === '4' && this.rng() < 0.30) v[3] = '0'; // cut down at the plate
+    return v.join('');
+  }
+
+  forceSteal(pitcher, ti) {
+    const st = this.st, bm = this.bmask();
+    if (!bm) return;
+    let rs = null;
+    if ((bm & 1) && !(bm & 2)) rs = st.bases[1]; else if ((bm & 2) && !(bm & 4)) rs = st.bases[2];
+    if (!rs) return;
+    const rr = this.tables.runrate[bm + '|' + st.outs];
+    const kinds = rr ? rr[1] : {};
+    const sb = kinds.SB || 1, cs = kinds.CS || 1;
+    let succ = Math.min(0.95, Math.max(0.35, sb / (sb + cs) * rs.p.bat.succRel * 0.95));
+    const kind = this.rng() < succ ? 'SB' : 'CS';
+    const varr = this.tables.runvec[`${kind}|${bm}|${st.outs}`];
+    if (!varr) return;
+    let vt = 0; for (const x of varr) vt += x[1];
+    let u = this.rng() * vt, vec = varr[varr.length - 1][0];
+    for (const x of varr) { u -= x[1]; if (u < 0) { vec = x[0]; break; } }
+    const res = this.applyVec(vec, null, pitcher);
+    st.outs += res.outsAdded; this.pbx(pitcher).outs += res.outsAdded;
+    const runs = this.scoreRuns(res.scored, pitcher, null);
+    const m = res.moves.find(x => x.r === rs) || res.moves[0];
+    let text;
+    if (kind === 'SB') { text = `${rs.p.name} steals ${m && m.to >= 4 ? 'home' : ORD[m ? m.to : 2] + ' base'} on the call.`; this.bx(rs.p).sb++; }
+    else { text = `${rs.p.name} is thrown out trying to steal.`; this.bx(rs.p).cs++; }
+    if (runs) text += ` ${runs} run${runs > 1 ? 's' : ''} score${runs > 1 ? '' : 's'}.`;
+    this.pushLog({ kind: 'run', text, moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })) });
+  }
+
+  /** Intentional walk or sacrifice bunt as a complete plate appearance. */
+  resolveWalkOrBunt(kind, batter, pitcher, call) {
+    const st = this.st, ti = st.half, bm = this.bmask(), outs0 = st.outs;
+    const bx = this.bx(batter.p), pb = this.pbx(pitcher);
+    let vec, text, evName = 'OUT', outcome = kind;
+    if (kind === 'ibb') {
+      vec = this.sampleVec('BB', '-', 0, bm, outs0) || this.defaultVec('BB', bm);
+      evName = 'BB';
+    } else {
+      // bunt outcome model
+      const u = this.rng();
+      const b = [bm & 1 ? 1 : 0, bm & 2 ? 1 : 0, bm & 4 ? 1 : 0];
+      const adv = (extra) => {
+        // everyone moves up one base; batter destination given
+        let v = extra;
+        for (let s = 1; s <= 3; s++) v += b[s - 1] ? String(Math.min(4, s + 1)) : '-';
+        return v;
+      };
+      const pitcherHits = batter.pos === 1;
+      const sacP = pitcherHits ? 0.66 : 0.62, hitP = 0.10, fcP = 0.10, dpP = (bm & 1) && outs0 < 2 ? 0.03 : 0;
+      if (u < sacP) { vec = adv('0'); outcome = 'sac'; }
+      else if (u < sacP + hitP) { vec = adv('1'); outcome = 'bunthit'; evName = '1B'; }
+      else if (u < sacP + hitP + fcP && bm) {
+        // lead runner erased, batter safe
+        const lead = b[2] ? 3 : b[1] ? 2 : 1;
+        let v = '1';
+        for (let s = 1; s <= 3; s++) v += !b[s - 1] ? '-' : (s === lead ? '0' : String(Math.min(4, s + 1)));
+        vec = v; outcome = 'fc';
+      } else if (u < sacP + hitP + fcP + dpP) {
+        let v = '0';
+        for (let s = 1; s <= 3; s++) v += !b[s - 1] ? '-' : (s === 1 ? '0' : String(s));
+        vec = v; outcome = 'dp';
+      } else { vec = '0'; for (let s = 1; s <= 3; s++) vec += b[s - 1] ? String(s) : '-'; outcome = 'fail'; }
+    }
+    const res = this.applyVec(vec, batter, pitcher);
+    st.outs += res.outsAdded; pb.outs += res.outsAdded;
+    const runs = this.scoreRuns(res.scored, pitcher, evName === 'BB' ? batter.p : (outcome === 'sac' ? batter.p : null));
+    bx.pa++; pb.bf++;
+    let name = batter.p.name;
+    if (kind === 'ibb') { bx.bb++; bx.ibb++; pb.bb++; text = `${name} is intentionally walked.`; }
+    else if (outcome === 'sac') { bx.sh++; text = `${name} lays down a sacrifice bunt.`; }
+    else if (outcome === 'bunthit') { bx.h++; pb.h++; st.hits[ti]++; text = `${name} bunts for a single!`; }
+    else if (outcome === 'fc') text = `${name} bunts; the lead runner is retired at the next base.`;
+    else if (outcome === 'dp') { bx.gdp++; text = `${name} bunts into a double play.`; }
+    else text = `${name} fails to get the bunt down and is out.`;
+    bx.ab = bx.pa - bx.bb - bx.hbp - bx.sf - bx.sh;
+    pb.pc += kind === 'ibb' ? 4 : 3;
+    if (runs) text += ` ${runs} run${runs > 1 ? 's' : ''} score${runs > 1 ? '' : 's'}.`;
+    st.slot[ti] = (st.slot[ti] + 1) % 9; st.paCount++; st.halfPA++;
+    const entry = { kind: 'pa', text, ev: kind === 'ibb' ? 'IBB' : 'BUNT', typ: kind === 'bunt' ? 'G' : null, zone: kind === 'bunt' ? (outcome === 'bunthit' ? 5 : 1) : 0, batter: name, pitcher: pitcher.name, runs, side: 'R', bunt: true,
+      moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })) };
+    this.pushLog(entry);
+    return this.afterPA(entry, false);
   }
 
   // ---------------------------------------------------------------- vector application
@@ -476,7 +615,7 @@ export class Sim {
       // lead runner who would steal
       let rs = null;
       if ((bm & 1) && !(bm & 2)) rs = st.bases[1]; else if ((bm & 2) && !(bm & 4)) rs = st.bases[2]; else rs = st.bases[bm & 4 ? 3 : 1];
-      const att = (sb + cs) / expo * (rs ? rs.p.bat.attMult : 1) * (this.opts.stealScale ?? 1);
+      const att = (sb + cs) / expo * (rs ? rs.p.bat.attMult : 1) * (this.opts.stealScale ?? 1) * this.stealMult(ti);
       let succ = sb / (sb + cs) * (rs ? rs.p.bat.succRel : 1);
       succ = Math.min(0.97, Math.max(0.3, succ));
       p.SB = att * succ; p.CS = att * (1 - succ);
@@ -515,7 +654,7 @@ export class Sim {
     else if (k === 'BK') text = 'Balk.';
     else text = 'Runner advances.';
     if (runs) text += ` ${runs} run${runs > 1 ? 's' : ''} score${runs > 1 ? '' : 's'}.`;
-    this.pushLog({ kind: 'run', text });
+    this.pushLog({ kind: 'run', text, moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })), rk: k });
     return { kind: k, outs: res.outsAdded, runs };
   }
 
@@ -555,6 +694,12 @@ export class Sim {
       if (!re) break;
       if (st.outs >= 3) { return this.afterPA(null, true); }
     }
+    const call = this.pickCalls(ti, fi, batter, pitcher);
+    this.manual = [{}, {}];
+    this.curCall = call;
+    if (call.steal) { this.forceSteal(pitcher, ti); if (st.outs >= 3) return this.afterPA(null, true); }
+    if (call.ibb) return this.resolveWalkOrBunt('ibb', batter, pitcher);
+    if (call.bunt) return this.resolveWalkOrBunt('bunt', batter, pitcher, call);
     const probs = this.paProbs(batter, pitcher, ti);
     const ev = pick(probs, 1, this.rng());
     const evName = EV[ev];
@@ -565,6 +710,7 @@ export class Sim {
     if (ev === 3 || ev === 4 || ev === 5 || ev === 7) { const s = this.sampleBIP(evName, batter, pitcher, side); typ = s.typ; zone = s.zone; }
     else if (ev === 6) { zone = this.sampleHRZone(side); typ = 'F'; }
     let vec = this.sampleVec(evName, typ, zone, bm, outs0) || this.defaultVec(evName, bm);
+    vec = this.tweakVec(vec, evName, typ, bm, outs0, call);
     const bx = this.bx(batter.p), pb = this.pbx(pitcher);
     const res = this.applyVec(vec, batter, pitcher);
     st.outs += res.outsAdded;
@@ -588,7 +734,7 @@ export class Sim {
     const text = this.describe(ev, typ, zone, vec, batter, res, runs, bm, outs0, sf);
     st.slot[ti] = (st.slot[ti] + 1) % 9;
     st.paCount++; st.halfPA++;
-    const entry = { kind: 'pa', text, ev: evName, typ, zone, batter: batter.p.name, pitcher: pitcher.name, runs, side };
+    const entry = { kind: 'pa', text, ev: evName, typ, zone, batter: batter.p.name, pitcher: pitcher.name, runs, side, moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })), outsAdded: res.outsAdded, strat: call.bunt || call.ibb || call.hitrun || call.infieldIn || call.steal ? call : null };
     this.pushLog(entry);
     return this.afterPA(entry, false);
   }

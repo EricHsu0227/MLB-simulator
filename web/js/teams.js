@@ -12,6 +12,8 @@ function parkFor(S, code) {
   return { id: site, name: G?.parks?.[site]?.n || site || 'Neutral park', pf: S.parks[site] || [1, 1, 1, 1] };
 }
 
+export function finishRoles(team) { return finish(team); }
+
 function finish(team) {
   // bullpen roles
   const pen = team.bullpen;

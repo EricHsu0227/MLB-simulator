@@ -2,6 +2,7 @@
 import { h, clear, ip, f3, select, table, POS } from './common.js';
 import { ordinal } from '../engine.js';
 import { batLine } from '../data.js';
+import { fieldSVG, animateEntry } from './field.js';
 
 export const teamLabel = t => `${t.year} ${t.name}`;
 const short = n => { const p = n.split(' '); return p.length > 1 ? p[p.length - 1] : n; };
@@ -17,6 +18,8 @@ export class GameView {
     this.tab = opts.startTab || 'log';
     this.newestFirst = true;
     this.timer = null;
+    this.busy = false;
+    this.anim = opts.anim ?? (matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1);
     this.logCount = 0;
     this.root = h('div', { class: 'gv' });
     this.build();
@@ -33,15 +36,29 @@ export class GameView {
     add(this.root, [this.titleEl, this.boardEl, h('div', { class: 'gv-mid' }, this.fieldEl, this.ctrlEl), this.tabsEl, this.bodyEl]);
   }
 
-  destroy() { this.stop(); }
-  stop() { if (this.timer) { clearInterval(this.timer); this.timer = null; } this.updateCtrl(); }
+  destroy() { this.stop(); this.gone = true; }
+  stop() { this.timer = null; this.updateCtrl(); }
 
   // ------------------------------------------------------------ actions
-  step(kind) {
+  async step(kind) {
     const sim = this.sim;
-    if (sim.isOver()) return;
-    if (kind === 'pa') sim.playPA();
-    else if (kind === 'half') sim.playHalf();
+    if (sim.isOver() || this.busy) return;
+    if (kind === 'pa') {
+      this.busy = true;
+      this.updateCtrl();
+      const svg = this.fieldEl.querySelector('svg');
+      const fresh = sim.st.log.length;
+      const entry = sim.playPA();
+      // draw pre-play field without runner labels, animate, then show the new state
+      if (this.anim > 0 && entry && svg) {
+        const pre = this._preState;
+        try {
+          for (const l of sim.st.log.slice(fresh)) if (l.kind === 'run' && l !== entry) await animateEntry(svg, l, this.anim);
+          await animateEntry(svg, entry, this.anim);
+        } catch (e) { console.warn('animation failed', e); }
+      }
+      this.busy = false;
+    } else if (kind === 'half') sim.playHalf();
     else if (kind === 'inning') {
       const i = sim.st.inning; let g = 0;
       while (!sim.isOver() && sim.st.inning === i && g++ < 400) sim.playHalf();
@@ -51,9 +68,18 @@ export class GameView {
   }
   auto() {
     if (this.timer) { this.stop(); return; }
-    const speed = { slow: 900, medium: 350, fast: 90 }[this.speed || 'medium'];
-    this.timer = setInterval(() => { this.step('pa'); }, speed);
+    this.timer = true;
     this.updateCtrl();
+    const pause = { slow: 900, medium: 350, fast: 60 }[this.speed || 'medium'];
+    const loop = async () => {
+      while (this.timer && !this.sim.isOver()) {
+        await this.step('pa');
+        await new Promise(r => setTimeout(r, pause));
+      }
+      this.timer = null;
+      this.updateCtrl();
+    };
+    loop();
   }
   finished() {
     if (this._fin) return;
@@ -107,42 +133,51 @@ export class GameView {
     const sim = this.sim, st = sim.st;
     clear(this.fieldEl);
     const over = sim.isOver();
-    const bt = st.half, ft = 1 - st.half;
-    const bases = st.bases;
-    const pos = { 1: [168, 108], 2: [110, 52], 3: [52, 108] };
-    let svg = `<svg viewBox="0 0 220 190" class="diamond" role="img" aria-label="Baseball diamond">
-      <polygon points="110,160 178,108 110,48 42,108" class="dia-fill"/>
-      <polygon points="110,160 178,108 110,48 42,108" class="dia-line"/>`;
-    for (const b of [1, 2, 3]) {
-      const [x, y] = pos[b];
-      svg += `<rect x="${x - 8}" y="${y - 8}" width="16" height="16" transform="rotate(45 ${x} ${y})" class="base ${bases[b] ? 'occ' : ''}"/>`;
-      if (bases[b]) svg += `<text x="${x}" y="${y + (b === 2 ? -14 : 24)}" text-anchor="${b === 1 ? 'start' : b === 3 ? 'end' : 'middle'}" class="rname" dx="${b === 1 ? -6 : b === 3 ? 6 : 0}">${esc(short(bases[b].p.name))}</text>`;
-    }
-    svg += `<polygon points="110,166 102,158 102,152 118,152 118,158" class="home"/>`;
-    for (let i = 0; i < 3; i++) svg += `<circle cx="${22 + i * 16}" cy="176" r="5" class="out ${st.outs > i ? 'on' : ''}"/>`;
-    svg += `<text x="12" y="16" class="inn">${over ? 'Final' : (st.half ? '▼' : '▲') + ' ' + ordinal(st.inning)}</text></svg>`;
-    const dia = h('div', { html: svg });
-    let mu = null;
+    const ft = 1 - st.half;
+    const label = over ? 'Final' : (st.half ? '▼' : '▲') + ' ' + ordinal(st.inning);
+    const dia = h('div', { html: fieldSVG({ bases: st.bases, outs: st.outs, label, fielders: true }) });
+    let mu = null, calls = null;
     if (!over) {
       const b = sim.currentBatter();
       const pit = st.pitcher[ft];
       const bb = sim.bx(b.p), pb = sim.pbx(pit);
       const S = b.p.S;
       const line = S ? batLine(S, b.p.idx) : null;
-      const pl = pit.S ? pit.S.pitRows.get(pit.idx) : null;
       mu = h('div', { class: 'matchup' },
         h('div', { class: 'mu-side' },
           h('div', { class: 'mu-role' }, 'At bat'),
           h('div', { class: 'mu-name' }, b.p.name, ' ', h('span', { class: 'chip' }, POS[b.pos] || b.pos), ' ', h('span', { class: 'chip alt' }, 'bats ' + b.p.bats)),
           h('div', { class: 'muted' }, `Today ${bb.h}-${bb.ab}${bb.bb ? ', ' + bb.bb + ' BB' : ''}${bb.hr ? ', ' + bb.hr + ' HR' : ''}${bb.k ? ', ' + bb.k + ' K' : ''}`),
-          line ? h('div', { class: 'muted' }, `${b.p.y}: ${f3(line.avg)}/${f3(line.obp)}/${f3(line.slg)}, wOBA ${f3(line.woba)}`) : null),
+          line ? h('div', { class: 'muted' }, `${b.p.y}: ${f3(line.avg)}/${f3(line.obp)}/${f3(line.slg)} · ${line.hr} HR · wOBA ${f3(line.woba)}`) : null),
         h('div', { class: 'mu-side' },
           h('div', { class: 'mu-role' }, 'Pitching'),
           h('div', { class: 'mu-name' }, pit.name, ' ', h('span', { class: 'chip alt' }, pit.throws + 'HP'), sim.isStarterOfGame(ft) ? h('span', { class: 'chip' }, 'SP') : h('span', { class: 'chip' }, (pit.role || 'RP').toUpperCase())),
           h('div', { class: 'muted' }, `${pb.bf} BF · ${ip(pb.outs)} IP · ${pb.r} R · ~${pb.pc} pitches`),
           h('div', { class: 'muted' }, `${pit.y} wOBA against ${f3(pit.pit.wobaAgainst)} · usual ${Math.round(pit.pit.endur)} BF`)));
+      calls = this.callsEl();
     }
-    add(this.fieldEl, [dia, mu]);
+    add(this.fieldEl, [dia, mu, calls]);
+  }
+
+  callsEl() {
+    const sim = this.sim, st = sim.st;
+    const ti = st.half, fi = 1 - ti;
+    const bm = sim.bmask();
+    const btn = (side, key, label, enabled, title) => h('button', {
+      class: 'btn sm call' + (sim.manual[side][key] ? ' on' : ''), disabled: !enabled || this.busy, title,
+      onclick: () => { sim.manual[side][key] = !sim.manual[side][key]; if (side === ti && (key === 'bunt' || key === 'steal' || key === 'hitrun')) for (const k of ['bunt', 'steal', 'hitrun']) if (k !== key) sim.manual[side][k] = false; this.renderField(); },
+    }, label);
+    return h('div', { class: 'calls' },
+      h('div', { class: 'mu-role' }, `Call it — ${sim.teams[ti].code} batting`),
+      h('div', { class: 'btnrow tight' },
+        btn(ti, 'bunt', 'Sac bunt', true, 'Bunt the runners over'),
+        btn(ti, 'steal', 'Steal', !!(bm & 3) && !(bm & 4 && !(bm & 3)), 'Send the lead runner'),
+        btn(ti, 'hitrun', 'Hit & run', !!(bm & 1), 'Runner goes; batter protects')),
+      h('div', { class: 'mu-role' }, `${sim.teams[fi].code} defense`),
+      h('div', { class: 'btnrow tight' },
+        btn(fi, 'ibb', 'Intentional walk', true, 'Put him on'),
+        btn(fi, 'infieldIn', 'Infield in', !!(bm & 4) && st.outs < 2, 'Cut off the run at the plate'),
+        btn(fi, 'hold', 'Hold runners', !!(bm & 3), 'Fewer steal attempts')));
   }
 
   updateCtrl() {
@@ -158,15 +193,16 @@ export class GameView {
       ]);
       return;
     }
-    const b = (label, fn, cls = '') => h('button', { class: 'btn ' + cls, onclick: fn }, label);
+    const b = (label, fn, cls = '') => h('button', { class: 'btn ' + cls, disabled: this.busy && !/Pause/.test(label), onclick: fn }, label);
     add(this.ctrlEl, [
-      b('Next batter', () => this.step('pa'), 'primary'),
+      b('Next batter ▸', () => this.step('pa'), 'primary'),
       b('Finish half-inning', () => this.step('half')),
       b('Finish inning', () => this.step('inning')),
       b('Sim to end', () => this.step('end')),
       h('div', { class: 'auto' },
         b(this.timer ? '❚❚ Pause' : '▶ Auto-play', () => this.auto()),
-        select([['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']], this.speed || 'medium', v => { this.speed = v; if (this.timer) { this.stop(); this.auto(); } })),
+        select([['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']], this.speed || 'medium', v => { this.speed = v; }),
+        h('label', { class: 'muted small' }, 'Animation ', select([[1, 'Full'], [0.5, 'Quick'], [0, 'Off']], this.anim, v => { this.anim = +v; })))
     ]);
   }
 
@@ -228,6 +264,18 @@ export class GameView {
     return wrap;
   }
 
+  stratEl(ti) {
+    const sim = this.sim, S = sim.strat[ti];
+    const row = (label, key, opts) => h('label', { class: 'srow' }, label, select(opts, S[key], v => { S[key] = isNaN(+v) ? v : +v; }));
+    return h('div', { class: 'strat' },
+      h('div', { class: 'mu-role' }, 'Strategy (applies when the auto-manager is in charge)'),
+      row('Stolen bases', 'steal', [[0, 'Never run'], [0.5, 'Cautious'], [1, 'Normal'], [1.6, 'Aggressive'], [2.5, 'Green light']]),
+      row('Sacrifice bunts', 'bunt', [['default', 'League norm'], ['situational', 'Weak hitters bunt runners over']]),
+      row('Intentional walks', 'ibb', [['default', 'League norm (rare)'], ['situational', 'Late, first base open, strong hitter']]),
+      row('Infield in', 'infieldIn', [['default', 'Never'], ['situational', 'Late, runner on 3rd, close game']]),
+      row('Starter’s leash', 'hook', [[0.8, 'Quick hook'], [1, 'Normal'], [1.2, 'Long leash']]));
+  }
+
   manageEl() {
     const sim = this.sim, st = sim.st;
     const wrap = h('div', { class: 'manage' });
@@ -238,6 +286,7 @@ export class GameView {
       const col = h('div', { class: 'mcol' });
       col.appendChild(h('h4', null, teamLabel(t)));
       col.appendChild(h('div', { class: 'row' }, 'Manager: ', select(mgrOpts, sim.opts.mgr[ti], v => { sim.opts.mgr[ti] = v; this.renderBody(); })));
+      col.appendChild(this.stratEl(ti));
       // lineup
       const lu = st.lineup[ti];
       col.appendChild(table(['#', 'Player', 'Pos', 'Today'], lu.map((x, i) => {

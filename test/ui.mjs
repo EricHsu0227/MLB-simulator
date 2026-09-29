@@ -20,7 +20,7 @@ if (which === 'all' || which === 'game') {
   await page.click('.gamelist table tbody tr >> nth=3');
   await page.waitForSelector('text=Play ball'); await shot('game-setup');
   await page.click('text=Play ball');
-  await page.waitForSelector('.gv'); await page.click('text=Next batter'); await page.click('text=Next batter');
+  await page.waitForSelector('.gv'); await page.click('text=Next batter'); await page.waitForTimeout(900); await shot('game-anim'); await page.waitForTimeout(2500); await page.click('text=Sac bunt'); await page.click('text=Next batter'); await page.waitForTimeout(3500);
   await shot('game-live');
   await page.click('text=Sim to end'); await page.waitForSelector('.final'); await shot('game-final');
   await page.click('button.tab:has-text("Real game")'); await shot('game-real');

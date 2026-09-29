@@ -157,7 +157,8 @@ export class League {
     const ht = dailyTeam(H, hr, g.day, this.rng, o);
     const at = dailyTeam(A, ar, g.day, this.rng, o);
     const dh = this.dhFor(H);
-    return new Sim(at, ht, { rng: this.rng, dh, method: this.opts.method, ghost: !!this.opts.ghost });
+    const strats = this.strats || {};
+    return new Sim(at, ht, { rng: this.rng, dh, method: this.opts.method, ghost: !!this.opts.ghost, strat: { 0: strats[g.away] || this.opts.strat, 1: strats[g.home] || this.opts.strat } });
   }
   finishGame(g, r) {
     const hr = this.rt.get(g.home), ar = this.rt.get(g.away);

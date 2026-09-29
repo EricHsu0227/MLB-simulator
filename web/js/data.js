@@ -312,13 +312,13 @@ export function batLine(S, idx) {
   const pa = n[0], h = n[4] + n[5] + n[6] + n[7];
   const ab = pa - n[2] - n[3];
   const tb = n[4] + 2 * n[5] + 3 * n[6] + 4 * n[7];
-  let w = 0; for (let i = 1; i < 8; i++) w += WOBA_W[i] * n[i];
+  let w = 0; for (let i = 1; i < 8; i++) w += WOBA_W[i - 1] * n[i];   // n[0] is PA; n[1..8] follow EV order
   return { pa, ab, h, hr: n[7], bb: n[2], k: n[1], avg: ab ? h / ab : 0, obp: pa ? (h + n[2] + n[3]) / pa : 0, slg: ab ? tb / ab : 0, woba: pa ? w / pa : 0 };
 }
 export function pitLine(S, idx) {
   const row = S.pitRows.get(idx);
   if (!row) return null;
   const n = row.n;
-  let w = 0; for (let i = 1; i < 8; i++) w += WOBA_W[i] * n[i];
+  let w = 0; for (let i = 1; i < 8; i++) w += WOBA_W[i - 1] * n[i];
   return { g: n[12], gs: n[13], ip: n[14] / 3, bf: n[0], k: n[1], bb: n[2], hr: n[7], woba: n[0] ? w / n[0] : 0, r: n[21], er: n[20] };
 }

@@ -1,0 +1,16 @@
+{
+  "name": "Diamond Sim — MLB history simulator",
+  "short_name": "Diamond Sim",
+  "description": "Replay any MLB game, postseason or season since 1901, or play the live 2026 season.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1a14",
+  "theme_color": "#0f5132",
+  "icons": [
+    { "src": "web/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "web/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "web/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

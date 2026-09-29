@@ -41,9 +41,9 @@ export function select(opts, value, onchange, attrs = {}) {
   return el;
 }
 export function table(head, rows, cls = '') {
-  return h('table', { class: 'tbl ' + cls },
+  return h('div', { class: 'tblwrap' }, h('table', { class: 'tbl ' + cls },
     head ? h('thead', null, h('tr', null, head.map(x => h('th', null, x)))) : null,
-    h('tbody', null, rows.map(r => h('tr', { class: r.cls }, (r.cells || r).map(c => (c instanceof Node ? c : h('td', null, c)))))));
+    h('tbody', null, rows.map(r => h('tr', { class: r.cls }, (r.cells || r).map(c => (c instanceof Node ? c : h('td', null, c))))))));
 }
 export function spinner(msg = 'Loading…') { return h('div', { class: 'spin' }, h('span', { class: 'dot' }), msg); }
 export function card(title, ...kids) { return h('section', { class: 'card' }, title ? h('h3', null, title) : null, kids); }

@@ -4,6 +4,7 @@ import { renderGameMode } from './ui/mode_game.js';
 import { renderPostMode } from './ui/mode_post.js';
 import { renderSeasonMode } from './ui/mode_season.js';
 import { renderCustomMode } from './ui/mode_custom.js';
+import { renderLiveMode } from './ui/mode_live.js';
 
 const ctx = { state: {}, index: null, G: null };
 const app = document.getElementById('app');
@@ -19,6 +20,7 @@ function home() {
       c('#/game', '1 · Play any game', 'Pick any game ever played. Same lineups, same starters, the roster that team actually used that week — and the real bullpen usage and substitutions shown next to your replay.'),
       c('#/post', '2 · Replay a postseason', 'Re-run any October or any single series with the real lineups and rotations. If the other team wins, the bracket carries your result forward and you keep playing.'),
       c('#/season', '3 · Season mode', 'Replay any season on its real schedule: standings, leaders, live games, then the playoffs.'),
+      c('#/live', '5 · Live 2026 season', 'Follow the real 2026 season as it unfolds — real rosters, real probable pitchers, real standings — and play or sim any game before (or after) it happens.'),
       c('#/custom', '4 · Custom league & tournament', 'Draft your own league from any team-seasons in history — divisions, schedule, playoff format — or a straight elimination tournament.')),
     h('details', { class: 'card how' }, h('summary', null, 'How the simulation works'),
       h('ul', null,
@@ -34,7 +36,7 @@ function route() {
   const r = (location.hash || '#/').replace(/^#\//, '').split('/')[0];
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === r));
   window.scrollTo(0, 0);
-  const fn = { '': home, game: () => renderGameMode(app, ctx), post: () => renderPostMode(app, ctx), season: () => renderSeasonMode(app, ctx), custom: () => renderCustomMode(app, ctx) }[r] || home;
+  const fn = { '': home, game: () => renderGameMode(app, ctx), post: () => renderPostMode(app, ctx), season: () => renderSeasonMode(app, ctx), custom: () => renderCustomMode(app, ctx), live: () => renderLiveMode(app, ctx) }[r] || home;
   Promise.resolve(fn()).catch(err => { console.error(err); clear(app); app.appendChild(h('div', { class: 'card warn' }, 'Something went wrong: ' + err.message)); });
 }
 
@@ -50,4 +52,5 @@ function route() {
   }
   window.addEventListener('hashchange', route);
   route();
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

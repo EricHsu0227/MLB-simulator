@@ -115,9 +115,9 @@ export async function renderGameMode(root, ctx) {
       h('td', null, nm(g.home)), h('td', { class: 'num' }, g.hs),
       h('td', { class: 'muted small' }, (ROUND[g.type] ? ROUND[g.type] + ' · ' : '') + (ctx.G.parks[g.park]?.n || g.park) + (g.src === 'g' ? ' · lineup only' : g.src === 'b' ? ' · box score' : '')),
       h('td', null, h('button', { class: 'btn sm primary', onclick: e => { e.stopPropagation(); openGame(g); } }, 'Open'))));
-    list.appendChild(h('table', { class: 'tbl' },
+    list.appendChild(h('div', { class: 'tblwrap' }, h('table', { class: 'tbl' },
       h('thead', null, h('tr', null, ['Date', 'Away', '', 'Home', '', 'Park / notes', ''].map(x => h('th', null, x)))),
-      h('tbody', null, rows)));
+      h('tbody', null, rows))));
     list.appendChild(h('div', { class: 'pager' },
       h('button', { class: 'btn sm', disabled: st.page === 0, onclick: () => { st.page--; drawList(); } }, '‹ Prev'),
       h('span', null, ` Page ${st.page + 1} / ${pages} `),
