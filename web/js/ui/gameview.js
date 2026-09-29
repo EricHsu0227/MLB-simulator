@@ -4,6 +4,7 @@ import { ordinal } from '../engine.js';
 import { batLine } from '../data.js';
 import { fieldSVG, animateEntry } from './field.js';
 import { archiveGame } from '../archive.js';
+import { playerLink } from './playercard.js';
 
 export const teamLabel = t => `${t.year} ${t.name}`;
 const short = n => { const p = n.split(' '); return p.length > 1 ? p[p.length - 1] : n; };
@@ -148,12 +149,12 @@ export class GameView {
       mu = h('div', { class: 'matchup' },
         h('div', { class: 'mu-side' },
           h('div', { class: 'mu-role' }, 'At bat'),
-          h('div', { class: 'mu-name' }, b.p.name, ' ', h('span', { class: 'chip' }, POS[b.pos] || b.pos), ' ', h('span', { class: 'chip alt' }, 'bats ' + b.p.bats)),
+          h('div', { class: 'mu-name' }, playerLink({ p: b.p }), ' ', h('span', { class: 'chip' }, POS[b.pos] || b.pos), ' ', h('span', { class: 'chip alt' }, 'bats ' + b.p.bats)),
           h('div', { class: 'muted' }, `Today ${bb.h}-${bb.ab}${bb.bb ? ', ' + bb.bb + ' BB' : ''}${bb.hr ? ', ' + bb.hr + ' HR' : ''}${bb.k ? ', ' + bb.k + ' K' : ''}`),
           line ? h('div', { class: 'muted' }, `${b.p.y}: ${f3(line.avg)}/${f3(line.obp)}/${f3(line.slg)} · ${line.hr} HR · wOBA ${f3(line.woba)}`) : null),
         h('div', { class: 'mu-side' },
           h('div', { class: 'mu-role' }, 'Pitching'),
-          h('div', { class: 'mu-name' }, pit.name, ' ', h('span', { class: 'chip alt' }, pit.throws + 'HP'), sim.isStarterOfGame(ft) ? h('span', { class: 'chip' }, 'SP') : h('span', { class: 'chip' }, (pit.role || 'RP').toUpperCase())),
+          h('div', { class: 'mu-name' }, playerLink({ p: pit }), ' ', h('span', { class: 'chip alt' }, pit.throws + 'HP'), sim.isStarterOfGame(ft) ? h('span', { class: 'chip' }, 'SP') : h('span', { class: 'chip' }, (pit.role || 'RP').toUpperCase())),
           h('div', { class: 'muted' }, `${pb.bf} BF · ${ip(pb.outs)} IP · ${pb.r} R · ~${pb.pc} pitches`),
           h('div', { class: 'muted' }, `${pit.y} wOBA against ${f3(pit.pit.wobaAgainst)} · usual ${Math.round(pit.pit.endur)} BF`)));
       calls = this.callsEl();
@@ -250,13 +251,13 @@ export class GameView {
       const rows = st.batSeen[ti].map(p => {
         const b = sim.bx(p);
         const cur = st.lineup[ti].find(x => x.p === p);
-        return { cells: [h('td', { class: 'pn' }, p.name, ' ', h('span', { class: 'muted' }, cur ? (POS[cur.pos] || '') : '')), b.ab, b.r, b.h, b.rbi, b.bb, b.k, b.hr + b.d + b.t > 0 ? [b.d ? b.d + ' 2B ' : '', b.t ? b.t + ' 3B ' : '', b.hr ? b.hr + ' HR' : ''].join('').trim() : ''] };
+        return { cells: [h('td', { class: 'pn' }, playerLink({ p }), ' ', h('span', { class: 'muted' }, cur ? (POS[cur.pos] || '') : '')), b.ab, b.r, b.h, b.rbi, b.bb, b.k, b.hr + b.d + b.t > 0 ? [b.d ? b.d + ' 2B ' : '', b.t ? b.t + ' 3B ' : '', b.hr ? b.hr + ' HR' : ''].join('').trim() : ''] };
       });
       const tot = st.batSeen[ti].reduce((a, p) => { const b = sim.bx(p); for (const k of ['ab', 'r', 'h', 'rbi', 'bb', 'k']) a[k] += b[k]; return a; }, { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 });
       rows.push({ cls: 'tot', cells: ['Totals', tot.ab, tot.r, tot.h, tot.rbi, tot.bb, tot.k, ''] });
       const prow = st.pitSeen[ti].map(p => {
         const b = sim.pbx(p);
-        return [h('td', { class: 'pn' }, p.name), ip(b.outs), b.h, b.r, b.bb, b.k, b.hr, b.bf, b.pc];
+        return [h('td', { class: 'pn' }, playerLink({ p })), ip(b.outs), b.h, b.r, b.bb, b.k, b.hr, b.bf, b.pc];
       });
       wrap.appendChild(h('div', { class: 'boxteam' },
         h('h4', null, teamLabel(t)),
@@ -293,7 +294,7 @@ export class GameView {
       const lu = st.lineup[ti];
       col.appendChild(table(['#', 'Player', 'Pos', 'Today'], lu.map((x, i) => {
         const b = sim.bx(x.p);
-        return { cls: (st.half === ti && st.slot[ti] === i && !sim.isOver()) ? 'now' : '', cells: [i + 1, x.p.name, POS[x.pos] || x.pos, `${b.h}-${b.ab}`] };
+        return { cls: (st.half === ti && st.slot[ti] === i && !sim.isOver()) ? 'now' : '', cells: [i + 1, h('td', null, playerLink({ p: x.p })), POS[x.pos] || x.pos, `${b.h}-${b.ab}`] };
       }), 'compact'));
       const pit = st.pitcher[ti];
       col.appendChild(h('div', { class: 'muted small' }, 'Pitching: ', h('b', null, pit.name), ` (${sim.pbx(pit).bf} BF)`));

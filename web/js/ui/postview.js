@@ -4,6 +4,7 @@ import { playSeriesGame } from '../league.js';
 import { mulberry32 } from '../engine.js';
 import { GameView, teamLabel } from './gameview.js';
 import { archiveGame } from '../archive.js';
+import { editLineups, applyEdits, reviewOn } from './lineup.js';
 
 export class PostseasonView {
   /**
@@ -31,11 +32,16 @@ export class PostseasonView {
     ps.finish(node);
   }
 
-  watch(node) {
+  async watch(node) {
     const ps = this.ps;
     const series = ps.ensureSeries(node);
     if (series.over) { ps.finish(node); this.render(); return; }
     const pg = playSeriesGame(series, (e, n, o, ish) => this.o.prepare(node, e, n, o, ish), this.rng, this.o.simOpts || {});
+    if (reviewOn()) {
+      const res = await editLineups(this.root, { away: pg.at, home: pg.ht, dh: !!pg.ht.dh, title: `${node.label} — Game ${pg.gameNo + 1}: set your lineups`, subtitle: `${teamLabel(pg.at)} at ${teamLabel(pg.ht)}` });
+      if (!res) { this.render(); return; }
+      applyEdits(res); pg.setTeams(res.away, res.home);
+    }
     const lead = series.wins[0] === series.wins[1] ? 'Series tied' : `${series.wins[0] > series.wins[1] ? series.hi.name : series.lo.name} lead ${Math.max(...series.wins)}–${Math.min(...series.wins)}`;
     const gv = new GameView(pg.sim, {
       title: `${node.label} — Game ${pg.gameNo + 1}`,

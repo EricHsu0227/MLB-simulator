@@ -5,6 +5,8 @@ import { Sim } from '../engine.js';
 import { realGameTeam } from '../teams.js';
 import { GameView, teamLabel } from './gameview.js';
 import { registerUniverse } from '../archive.js';
+import { editLineups, applyEdits, reviewOn } from './lineup.js';
+import { playerLink } from './playercard.js';
 
 const TYPES = [['R', 'Regular season'], ['post', 'Postseason'], ['AS', 'All-Star Game'], ['all', 'All games']];
 const ROUND = { WC: 'Wild Card', DV: 'Division Series', LC: 'LCS', WS: 'World Series', AS: 'All-Star Game', R: '' };
@@ -138,7 +140,7 @@ export async function renderGameMode(root, ctx) {
       const bat = ti === 0 ? g.vb : g.hb;
       const spIdx = ti === 0 ? g.vsp : g.hsp;
       return h('div', { class: 'boxteam' }, h('h4', null, `${teamLabel(t)} ${ti === 0 ? '(away)' : '(home)'}`),
-        table(['#', 'Player', 'Pos', 'Bats'], bat.map(([idx, pos], i) => [i + 1, S.players[idx].name, POS[pos] || pos, S.players[idx].bats]), 'compact'),
+        table(['#', 'Player', 'Pos', 'Bats'], bat.map(([idx, pos], i) => [i + 1, h('td', null, playerLink({ p: t.lookup(idx) })), POS[pos] || pos, S.players[idx].bats]), 'compact'),
         h('div', { class: 'muted small' }, 'Starting pitcher: ', h('b', null, spIdx >= 0 ? S.players[spIdx].name : '?')),
         h('details', null, h('summary', null, `Active roster (approx.): ${t.bench.length} bench · ${t.bullpen.length} pitchers`),
           h('p', { class: 'small' }, h('b', null, 'Bench: '), t.bench.map(p => p.name).join(', ') || '—'),
@@ -154,9 +156,16 @@ export async function renderGameMode(root, ctx) {
     wrap.append(h('div', { class: 'box2' }, lineupCard(0), lineupCard(1)), opts, card('What really happened', realGamePanel(S, g)));
     root.appendChild(wrap);
 
-    function start() {
+    async function start() {
       const seed = setup.seed ? [...setup.seed].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) : undefined;
-      const a = realGameTeam(S, g, 0), hm = realGameTeam(S, g, 1);
+      let a = realGameTeam(S, g, 0), hm = realGameTeam(S, g, 1);
+      if (reviewOn()) {
+        const res = await editLineups(root, { away: a, home: hm, dh: !!g.dh, title: 'Set your lineups', subtitle: `${fmtDate(g.date)} — as-played lineups and starters. Change anything you like.` });
+        if (!res) { openGame(g); return; }
+        applyEdits(res); a = res.away; hm = res.home;
+        if (res.edited[0]) setup.mgrA = setup.mgrA === 'script' ? 'auto' : setup.mgrA;
+        if (res.edited[1]) setup.mgrH = setup.mgrH === 'script' ? 'auto' : setup.mgrH;
+      }
       const sim = new Sim(a, hm, {
         seed, dh: !!g.dh, method: setup.method, ghost: g.type === 'R' && S.y >= 2020,
         script: { 0: a.script, 1: hm.script }, mgr: { 0: setup.mgrA, 1: setup.mgrH },

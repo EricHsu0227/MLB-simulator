@@ -414,6 +414,9 @@ def process_season(args):
     tlg = load_teams(rs, year)
     hands = load_rosters(rs, year)
     acc = Acc()
+    acc_tables_only = Acc()      # postseason/All-Star games: learn tables, but keep player & league rates regular-season only
+    for nm in ('joint', 'hrz', 'tr', 'runexp', 'runev', 'runvec', 'plat'):
+        setattr(acc_tables_only, nm, getattr(acc, nm))
     d = os.path.join(rs, 'seasons', str(year))
     by_key = {}
     for m in master:
@@ -438,7 +441,7 @@ def process_season(args):
             if not g.plays:
                 continue
             m['src'] = 'p'
-            plines = process_game_events(g, m, acc, hands, tlg, era)
+            plines = process_game_events(g, m, acc if m['type'] == 'R' else acc_tables_only, hands, tlg, era)
             m['starts'] = g.starts
             m['subs'] = g.subs
             m['usedh'] = 1 if g.info.get('usedh') == 'true' else 0
@@ -460,6 +463,7 @@ def process_season(args):
             if m is None or m.get('src') or not b['starts']:
                 continue
             m['src'] = 'b'
+            reg = m['type'] == 'R'
             m['starts'] = b['starts']
             m['subs'] = box_subs(b)
             m['usedh'] = 1 if b['info'].get('usedh') == 'true' else 0
@@ -479,7 +483,7 @@ def process_season(args):
             m['plines'] = plines
             stats['box'] += 1
             # stats from box lines
-            for (team, slot), lst in b['bl'].items():
+            for (team, slot), lst in (b['bl'].items() if reg else []):
                 bat_t = vis if team == 0 else home_
                 blg = tlg.get(bat_t, {}).get('lg', 'AL')
                 lgb = acc.lgrec(blg)
@@ -508,7 +512,7 @@ def process_season(args):
                         acc.teamHR[vis]['R'][i_] += x
                     if not pos_p:
                         acc.bpark[(pid, False)][m['park']] += pa
-            for (team, lst) in b['pl'].items():
+            for (team, lst) in (b['pl'].items() if reg else []):
                 pit_t = home_ if team == 1 else vis
                 plg = tlg.get(pit_t, {}).get('lg', 'AL')
                 lgp = acc.lgrec(plg)
@@ -540,6 +544,8 @@ def process_season(args):
             stats['gl'] += 1
     # pitcher game-level stats
     for m in master:
+        if m['type'] != 'R':
+            continue
         for (team, pid), p in m['plines'].items():
             pr = prow(acc.pit, pid)
             pr[12] += 1

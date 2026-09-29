@@ -1,6 +1,7 @@
 // Static viewer for a stored game record: line score, box score, play-by-play.
 import { h, table, ip, spinner, clear, POS, fmtDate } from './common.js';
 import { getLog } from '../store.js';
+import { playerLink } from './playercard.js';
 
 const nameOf = t => (t.year ? t.year + ' ' : '') + t.name;
 
@@ -11,13 +12,13 @@ export function boxTables(g) {
     const rows = g.batting[ti].map(b => {
       const s = b.s;
       const xb = [s.d ? s.d + ' 2B' : '', s.t ? s.t + ' 3B' : '', s.hr ? s.hr + ' HR' : ''].filter(Boolean).join(' ');
-      return [h('td', { class: 'pn' }, b.name, ' ', h('span', { class: 'muted' }, b.pos ? POS[b.pos] || '' : '')), s.ab || 0, s.r || 0, s.h || 0, s.rbi || 0, s.bb || 0, s.k || 0, xb];
+      return [h('td', { class: 'pn' }, playerLink({ y: b.y, id: b.id, name: b.name }), ' ', h('span', { class: 'muted' }, b.pos ? POS[b.pos] || '' : '')), s.ab || 0, s.r || 0, s.h || 0, s.rbi || 0, s.bb || 0, s.k || 0, xb];
     });
     const tot = g.batting[ti].reduce((a, b) => { for (const k of ['ab', 'r', 'h', 'rbi', 'bb', 'k']) a[k] += b.s[k] || 0; return a; }, { ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0 });
     rows.push({ cls: 'tot', cells: ['Totals', tot.ab, tot.r, tot.h, tot.rbi, tot.bb, tot.k, ''] });
     const prow = g.pitching[ti].map(p => {
       const s = p.s; const dec = g.dec.W === p.k ? ' (W)' : g.dec.L === p.k ? ' (L)' : g.dec.SV === p.k ? ' (SV)' : '';
-      return [h('td', { class: 'pn' }, p.name + dec), ip(s.outs || 0), s.h || 0, s.r || 0, s.bb || 0, s.k || 0, s.hr || 0, s.bf || 0, s.pc || 0];
+      return [h('td', { class: 'pn' }, playerLink({ y: p.y, id: p.id, name: p.name }), dec), ip(s.outs || 0), s.h || 0, s.r || 0, s.bb || 0, s.k || 0, s.hr || 0, s.bf || 0, s.pc || 0];
     });
     wrap.appendChild(h('div', { class: 'boxteam' }, h('h4', null, nameOf(t)),
       table(['Batting', 'AB', 'R', 'H', 'RBI', 'BB', 'K', ''], rows, 'compact'),

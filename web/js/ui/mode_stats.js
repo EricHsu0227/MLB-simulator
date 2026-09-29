@@ -4,6 +4,7 @@ import { listGames, getGame, deleteGames, getRawLog, putGames, estimate, request
 import { aggregate, getUniverses } from '../archive.js';
 import { gameDetail } from './gamedetail.js';
 import { accountCard } from './account.js';
+import { openPlayerCard } from './playercard.js';
 
 const BAT_CATS = [['hr', 'Home runs'], ['rbi', 'RBI'], ['avg', 'Batting average'], ['h', 'Hits'], ['r', 'Runs'], ['sb', 'Stolen bases'], ['ops', 'OPS'], ['obp', 'On-base %'], ['slg', 'Slugging'], ['bb', 'Walks'], ['k', 'Strikeouts']];
 const PIT_CATS = [['w', 'Wins'], ['sv', 'Saves'], ['k', 'Strikeouts'], ['era', 'ERA (RA/9)'], ['whip', 'WHIP'], ['ip', 'Innings']];
@@ -84,7 +85,7 @@ export async function renderStatsMode(root, ctx) {
   function playerPage(agg, byId) {
     const b = agg.bat.get(st.player), p = agg.pit.get(st.player);
     const a = b || p;
-    const out = h('div', { class: 'stack' }, h('button', { class: 'btn sm', onclick: () => { st.player = null; draw(); } }, '‹ All players'), h('h3', null, a.name, ' ', h('span', { class: 'muted' }, [...a.teams].join(' / '))));
+    const out = h('div', { class: 'stack' }, h('button', { class: 'btn sm', onclick: () => { st.player = null; draw(); } }, '‹ All players'), h('h3', null, a.name, ' ', h('span', { class: 'muted' }, [...a.teams].join(' / ')), ' ', h('button', { class: 'btn sm primary', onclick: () => openPlayerCard({ y: a.y, id: a.id, name: a.name, S: ctx.state.live?.S && ctx.state.live.S.y === a.y ? ctx.state.live.S : undefined }) }, 'Season stats & Savant')));
     if (b && b.pa) out.appendChild(card('Batting', table(['G', 'PA', 'AB', 'H', '2B', '3B', 'HR', 'RBI', 'R', 'BB', 'K', 'SB', 'AVG', 'OBP', 'SLG', 'OPS'], [[b.g, b.pa, b.ab, b.h, b.d, b.t, b.hr, b.rbi, b.r, b.bb, b.k, b.sb, f3(b.avg), f3(b.obp), f3(b.slg), f3(b.ops)]], 'compact')));
     if (p && p.bf) out.appendChild(card('Pitching', table(['G', 'GS', 'W-L', 'SV', 'IP', 'H', 'R', 'BB', 'K', 'HR', 'RA/9', 'WHIP', 'K/9'], [[p.g, p.gs, `${p.w}-${p.l}`, p.sv, ip(p.outs), p.h, p.r, p.bb, p.k, p.hr, p.era.toFixed(2), p.whip.toFixed(2), p.k9.toFixed(1)]], 'compact')));
     const ids = new Set([...(b?.games || []), ...(p?.games || [])]);

@@ -6,6 +6,8 @@ import { League, dailyTeam, newRuntime } from '../league.js';
 import { playoffFromLeague, historicFormat } from '../post.js';
 import { PostseasonView } from './postview.js';
 import { GameView, teamLabel } from './gameview.js';
+import { editLineups, applyEdits, reviewOn } from './lineup.js';
+import { playerLink } from './playercard.js';
 import { archiveGame, registerUniverse } from '../archive.js';
 
 const DIV = { E: 'East', C: 'Central', W: 'West', '': '' };
@@ -66,9 +68,15 @@ export class SeasonView {
     this.render();
   }
 
-  watch(g) {
+  async watch(g) {
     const lg = this.lg;
-    const sim = lg.prepareGame(g);
+    let { at, ht, dh } = lg.buildTeams(g);
+    if (reviewOn()) {
+      const res = await editLineups(this.root, { away: at, home: ht, dh, title: `${lg.by.get(g.away).name} at ${lg.by.get(g.home).name}: set your lineups` });
+      if (!res) { this.render(); return; }
+      applyEdits(res); at = res.away; ht = res.home;
+    }
+    const sim = lg.makeSim(g, at, ht, dh);
     const gv = new GameView(sim, {
       title: `${lg.by.get(g.away).name} at ${lg.by.get(g.home).name}`,
       subtitle: g.date ? `Season game` : `Day ${g.day + 1}`,
@@ -168,11 +176,11 @@ export class SeasonView {
     const S = t.S;
     const row = (p, extra = []) => {
       const bl = batLine(S, p.idx);
-      return [p.name, p.bats + '/' + p.throws, bl ? bl.pa : '', bl ? f3(bl.avg) + '/' + f3(bl.obp) + '/' + f3(bl.slg) : '', bl ? bl.hr : '', f3(p.bat.woba), ...extra];
+      return [h('td', null, playerLink({ p })), p.bats + '/' + p.throws, bl ? bl.pa : '', bl ? f3(bl.avg) + '/' + f3(bl.obp) + '/' + f3(bl.slg) : '', bl ? bl.hr : '', f3(p.bat.woba), ...extra];
     };
     wrap.appendChild(card(`${teamLabel(t)} — lineup (real ${t.year} stats)`, table(['Player', 'B/T', 'PA', 'AVG/OBP/SLG', 'HR', 'wOBA (sim rating)', 'Pos'], t.lineup.map(x => row(x.p, [POS[x.pos]])), 'compact')));
     wrap.appendChild(card('Bench', table(['Player', 'B/T', 'PA', 'AVG/OBP/SLG', 'HR', 'wOBA'], t.bench.map(p => row(p)), 'compact')));
-    const prow = (p, role) => { const pl = pitLine(S, p.idx); return [p.name, p.throws, role, pl ? pl.g + '/' + pl.gs : '', pl ? ip(pl.outs ?? pl.ip * 3) : '', pl ? pl.k : '', pl ? pl.bb : '', f3(p.pit.wobaAgainst)]; };
+    const prow = (p, role) => { const pl = pitLine(S, p.idx); return [h('td', null, playerLink({ p })), p.throws, role, pl ? pl.g + '/' + pl.gs : '', pl ? ip(pl.outs ?? pl.ip * 3) : '', pl ? pl.k : '', pl ? pl.bb : '', f3(p.pit.wobaAgainst)]; };
     wrap.appendChild(card('Rotation', table(['Pitcher', 'T', 'Role', 'G/GS', 'IP', 'K', 'BB', 'wOBA against'], t.rotation.map((p, i) => prow(p, 'SP' + (i + 1))), 'compact')));
     wrap.appendChild(card('Bullpen', table(['Pitcher', 'T', 'Role', 'G/GS', 'IP', 'K', 'BB', 'wOBA against'], t.bullpen.map(p => prow(p, p.role)), 'compact')));
     return wrap;

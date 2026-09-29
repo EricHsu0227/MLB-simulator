@@ -15,7 +15,7 @@ const base = 'http://127.0.0.1:8123/index.html';
 await page.goto(base); await page.waitForSelector('.modes'); await shot('home');
 console.log('overflow home', await page.evaluate(() => document.documentElement.scrollWidth - innerWidth));
 await page.goto(base + '#/game'); await page.waitForSelector('.gamelist tbody tr'); await shot('gamelist');
-await page.click('.gamelist tbody tr >> nth=2'); await page.click('text=Play ball'); await page.waitForSelector('.gv'); await page.click('text=Next batter'); await page.waitForTimeout(1200); await shot('game');
+await page.click('.gamelist tbody tr >> nth=2'); await page.click('text=Play ball'); await page.waitForSelector('h2:has-text("Set your lineups")'); await shot('lineups'); await page.click('text=Play ball'); await page.waitForSelector('.gv'); await page.click('text=Next batter'); await page.waitForTimeout(1200); await shot('game');
 console.log('overflow game', await page.evaluate(() => document.documentElement.scrollWidth - innerWidth));
 await page.evaluate(() => window.scrollTo(0, 900)); await shot('game-low');
 await page.goto(base + '#/live'); await page.waitForSelector('.gamecard'); await shot('live');

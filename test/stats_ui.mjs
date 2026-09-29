@@ -21,7 +21,7 @@ await shot('ps-games');
 await page.click('.gamecard >> nth=0 >> text=Quick sim'); await page.waitForTimeout(1500);
 // regular game, played live
 await page.fill('input[type=date]', '2026-06-20'); await page.dispatchEvent('input[type=date]', 'change'); await page.waitForSelector('.gamecard');
-await page.click('.gamecard >> nth=1 >> text=Play it'); await page.waitForSelector('.gv'); await page.click('text=Sim to end'); await page.waitForSelector('.final'); await page.waitForTimeout(800);
+await page.click('.gamecard >> nth=1 >> text=Play it'); await page.waitForSelector('h2:has-text("set your lineups")'); await page.click('text=Play ball'); await page.waitForSelector('.gv'); await page.click('text=Sim to end'); await page.waitForSelector('.final'); await page.waitForTimeout(800);
 await page.click('text=Back to games');
 await page.click('button.tab:has-text("Postseason")'); await page.waitForSelector('.rounds'); await shot('ps-bracket');
 const sims = page.locator('button:has-text("Sim series")');

@@ -6,6 +6,8 @@ import { buildTeam } from '../teams.js';
 import { GameView, teamLabel } from './gameview.js';
 import { fetchLive, saveLive, loadSavedLive, loadResults, saveResult, clearResults, buildLiveSeason, buildLiveTeam, liveGameTeams, standingsFrom, projectSeason, buildLivePostseason, MLB_TEAM } from '../live.js';
 import { PostseasonView } from './postview.js';
+import { editLineups, applyEdits, reviewOn } from './lineup.js';
+import { playerLink } from './playercard.js';
 import { archiveGame, registerUniverse, universeGames } from '../archive.js';
 
 const YEAR = 2026;
@@ -148,8 +150,8 @@ export async function renderLiveMode(root, ctx) {
     return card;
   }
 
-  async function makeSim(g, seed, useFeed = false) {
-    const t = await teamsForGame(g, useFeed);
+  async function makeSim(g, seed, useFeed = false, teams = null) {
+    const t = teams || await teamsForGame(g, useFeed);
     const sim = new Sim(t.away, t.home, { seed, dh: true, method: ctx.state.method || 'odds', ghost: true, script: null, mgr: { 0: 'auto', 1: 'auto' } });
     return { sim, t };
   }
@@ -167,7 +169,13 @@ export async function renderLiveMode(root, ctx) {
   async function playGame(g) {
     clear(body); body.appendChild(spinner('Loading lineups…'));
     await nextFrame();
-    const { sim, t } = await makeSim(g, undefined, true);
+    let teams = await teamsForGame(g, true);
+    if (reviewOn()) {
+      const res = await editLineups(body, { away: teams.away, home: teams.home, dh: true, title: `${st.meta[g.away].name} at ${st.meta[g.home].name}: set your lineups`, subtitle: `${fmtDate(g.date)}${teams.note ? ' · ' + teams.note : ''}` });
+      if (!res) { draw(); return; }
+      applyEdits(res); teams = { ...teams, away: res.away, home: res.home };
+    }
+    const { sim, t } = await makeSim(g, undefined, false, teams);
     const gv = new GameView(sim, {
       title: `${st.meta[g.away].name} at ${st.meta[g.home].name}`,
       subtitle: `${fmtDate(g.date)} · ${g.venue || ''}${t.note ? ' · ' + t.note : ''}`,
@@ -308,9 +316,9 @@ export async function renderLiveMode(root, ctx) {
     out.appendChild(h('div', { class: 'filters' }, h('label', null, 'Team ', select(Object.keys(st.meta).sort((a, b) => st.meta[a].name.localeCompare(st.meta[b].name)).map(c => [c, st.meta[c].name]), code, v => { st.teamSel = v; draw(); }))));
     const t = teamFor(code);
     const pos = { 1: 'P', 2: 'C', 3: '1B', 4: '2B', 5: '3B', 6: 'SS', 7: 'LF', 8: 'CF', 9: 'RF', 10: 'DH' };
-    out.appendChild(card(`${st.meta[code].name} — projected lineup`, table(['#', 'Player', 'Pos', 'B', 'wOBA rating'], t.lineup.map((x, i) => [i + 1, x.p.name, pos[x.pos], x.p.bats, f3(x.p.bat.woba)]), 'compact')));
-    out.appendChild(card('Rotation', table(['Pitcher', 'T', 'wOBA against'], t.rotation.map(p => [p.name, p.throws, f3(p.pit.wobaAgainst)]), 'compact')));
-    out.appendChild(card('Bullpen', table(['Pitcher', 'Role', 'T', 'wOBA against'], t.bullpen.map(p => [p.name, p.role, p.throws, f3(p.pit.wobaAgainst)]), 'compact')));
+    out.appendChild(card(`${st.meta[code].name} — projected lineup`, table(['#', 'Player', 'Pos', 'B', 'wOBA rating'], t.lineup.map((x, i) => [i + 1, h('td', null, playerLink({ p: x.p })), pos[x.pos], x.p.bats, f3(x.p.bat.woba)]), 'compact')));
+    out.appendChild(card('Rotation', table(['Pitcher', 'T', 'wOBA against'], t.rotation.map(p => [h('td', null, playerLink({ p })), p.throws, f3(p.pit.wobaAgainst)]), 'compact')));
+    out.appendChild(card('Bullpen', table(['Pitcher', 'Role', 'T', 'wOBA against'], t.bullpen.map(p => [h('td', null, playerLink({ p })), p.role, p.throws, f3(p.pit.wobaAgainst)]), 'compact')));
     return out;
   }
 

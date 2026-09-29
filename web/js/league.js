@@ -150,15 +150,21 @@ export class League {
     if (r === 'never') return false;
     return !!home.team.dh;
   }
-  prepareGame(g) {
+  buildTeams(g) {
     const H = this.by.get(g.home), A = this.by.get(g.away);
     const hr = this.rt.get(g.home), ar = this.rt.get(g.away);
     const o = g.date ? { ...this.opts, dayNum: dayNumOf(g.date) } : this.opts;
     const ht = dailyTeam(H, hr, g.day, this.rng, o);
     const at = dailyTeam(A, ar, g.day, this.rng, o);
-    const dh = this.dhFor(H);
+    return { at, ht, dh: this.dhFor(H) };
+  }
+  makeSim(g, at, ht, dh) {
     const strats = this.strats || {};
     return new Sim(at, ht, { rng: this.rng, dh, method: this.opts.method, ghost: !!this.opts.ghost, strat: { 0: strats[g.away] || this.opts.strat, 1: strats[g.home] || this.opts.strat } });
+  }
+  prepareGame(g) {
+    const { at, ht, dh } = this.buildTeams(g);
+    return this.makeSim(g, at, ht, dh);
   }
   finishGame(g, r) {
     const hr = this.rt.get(g.home), ar = this.rt.get(g.away);
@@ -439,10 +445,17 @@ export function playSeriesGame(series, prepare, rng, simOpts = {}) {
   const homeE = homeIdx === 0 ? series.hi : series.lo;
   const awayE = homeIdx === 0 ? series.lo : series.hi;
   const gameNo = series.nextGameNo();
-  const ht = prepare(homeE, gameNo, awayE, true);
-  const at = prepare(awayE, gameNo, homeE, false);
-  const script = { 0: at.script || [], 1: ht.script || [] };
-  const mgr = { 0: script[0].length ? 'script' : 'auto', 1: script[1].length ? 'script' : 'auto' };
-  const sim = new Sim(at, ht, Object.assign({ rng, dh: !!ht.dh, script, mgr }, simOpts));
-  return { sim, homeIdx, ht, at, homeE, awayE, gameNo, finish() { const r = sim.playGame(); series.record(r.score[1], r.score[0], homeIdx); return r; }, record(r) { series.record(r.score[1], r.score[0], homeIdx); } };
+  const pg = { homeIdx, homeE, awayE, gameNo };
+  pg.ht = prepare(homeE, gameNo, awayE, true);
+  pg.at = prepare(awayE, gameNo, homeE, false);
+  const build = () => {
+    const script = { 0: pg.at.script || [], 1: pg.ht.script || [] };
+    const mgr = { 0: script[0].length ? 'script' : 'auto', 1: script[1].length ? 'script' : 'auto' };
+    return new Sim(pg.at, pg.ht, Object.assign({ rng, dh: !!pg.ht.dh, script, mgr }, simOpts));
+  };
+  pg.sim = build();
+  pg.setTeams = (at, ht) => { pg.at = at; pg.ht = ht; pg.sim = build(); };
+  pg.finish = () => { const r = pg.sim.playGame(); series.record(r.score[1], r.score[0], homeIdx); return r; };
+  pg.record = r => series.record(r.score[1], r.score[0], homeIdx);
+  return pg;
 }
