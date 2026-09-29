@@ -1,6 +1,7 @@
 // Account card (sign in / sync status) and the nav button.
 import { h, card } from './common.js';
 import { cloud } from '../cloud.js';
+import { ENABLE_APPLE } from '../config.js';
 
 export function accountCard(ctx, redraw) {
   const box = h('div');
@@ -21,7 +22,7 @@ export function accountCard(ctx, redraw) {
         h('p', { class: 'muted small' }, 'Your box scores, game logs and player stats sync to your account so they’re on every device.'),
         h('div', { class: 'btnrow' },
           h('button', { class: 'btn primary big', disabled: s.status === 'signing-in', onclick: () => cloud.signIn('google') }, 'Continue with Google'),
-          h('button', { class: 'btn big applebtn', disabled: s.status === 'signing-in', onclick: () => cloud.signIn('apple') }, ' Sign in with Apple')),
+          ENABLE_APPLE ? h('button', { class: 'btn big applebtn', disabled: s.status === 'signing-in', onclick: () => cloud.signIn('apple') }, ' Sign in with Apple') : null),
         s.msg ? h('p', { class: 'warn small' }, s.msg) : null));
     }
   };

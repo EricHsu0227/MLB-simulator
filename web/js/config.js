@@ -1,11 +1,14 @@
-// Cloud login + sync configuration.
-//
-// Leave FIREBASE_CONFIG as null and the app works fully offline: every game is saved on this device only.
-// To enable "Continue with Google" / "Sign in with Apple" and sync across your Mac and iPhone, create a
-// Firebase project and paste its web-app config here. Step by step: docs/SETUP_LOGIN.md
-//
-// Example:
-// export const FIREBASE_CONFIG = {
-//   apiKey: '...', authDomain: 'your-project.firebaseapp.com', projectId: 'your-project', appId: '1:123:web:abc',
-// };
-export const FIREBASE_CONFIG = null;
+// Cloud login + sync configuration (Firebase web config; these values are public identifiers, not secrets —
+// your Firestore security rules are what protect the data). Setup steps: docs/SETUP_LOGIN.md
+export const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyD4XWyvZOJhDiYVs2byV_bt0SnhJpaQJvw',
+  authDomain: 'mlb-simulator.firebaseapp.com',
+  projectId: 'mlb-simulator',
+  storageBucket: 'mlb-simulator.firebasestorage.app',
+  messagingSenderId: '611515882575',
+  appId: '1:611515882575:web:c5373c9622578278cb1e3a',
+};
+
+// The "Sign in with Apple" button needs a paid Apple Developer account plus extra Firebase setup.
+// Leave false to show Google only; set true after enabling Apple in Firebase (docs/SETUP_LOGIN.md, step 4).
+export const ENABLE_APPLE = false;
