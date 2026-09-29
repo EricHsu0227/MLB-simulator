@@ -1,0 +1,10 @@
+import { setDataBase, loadGlobal, loadSeason } from '../web/js/data.js';
+import { buildTeam } from '../web/js/teams.js';
+setDataBase(new URL('../data/', import.meta.url).pathname);
+await loadGlobal();
+const S = await loadSeason(2019);
+const t = buildTeam(S, 'CHN');
+const f = a => Array.from(a).map(v => v.toFixed(3)).join(' ');
+for (const p of [t.sp, t.rotation[1], ...t.bullpen.slice(0,2)]) console.log(p.name, 'batP', f(p.batP.r), p.batP.pa, ' bat', f(p.bat.r), p.bat.pa);
+console.log(S.batpRows.size, [...S.batpRows.entries()].slice(0,2));
+console.log(t.lineup.map(x=>x.pos+':'+x.p.name).join(', '));

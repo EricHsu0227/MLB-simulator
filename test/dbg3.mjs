@@ -1,0 +1,16 @@
+import { setDataBase, loadGlobal, loadSeason, baselineRates } from '../web/js/data.js';
+import { Sim } from '../web/js/engine.js';
+import { buildTeam } from '../web/js/teams.js';
+setDataBase(new URL('../data/', import.meta.url).pathname);
+await loadGlobal();
+const S = await loadSeason(2019);
+const A = buildTeam(S, 'PIT'), H = buildTeam(S, 'HOU');
+const sim = new Sim(A, H, { seed: 1, dh: false });
+const b = baselineRates(S, 'NL');
+const fake = { p: { bats: 'R', bat: { r: b.bat, t: [.4,.2,.4], d:[.4,.35,.25] }, batP: { r: b.batP } }, pos: 5 };
+const fp = { throws: 'R', pit: { r: b.pit, endur: 25, t:[.4,.2,.4] }, key: 'fp' };
+sim.pf = [1,1,1,1];
+const f = a => Array.from(a).map(v => v.toFixed(4)).join(' ');
+console.log('base', f(b.bat));
+console.log('probs', f(sim.paProbs(fake, fp, 0)));
+console.log('plat', f(sim.tables.plat.R.R), f(sim.tables.plat.R.L));

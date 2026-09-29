@@ -1,0 +1,13 @@
+import { createRequire } from 'node:module';
+import { execSync } from 'node:child_process';
+const require = createRequire(import.meta.url);
+const { chromium } = require(execSync('npm root -g').toString().trim() + '/playwright');
+const browser = await chromium.launch({ args: ['--no-sandbox'] });
+const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+page.on('console', m => console.log('console', m.type(), m.text()));
+page.on('pageerror', e => console.log('PAGEERROR', e.message, (e.stack||'').split('\n').slice(0,5).join('\n')));
+await page.goto('http://127.0.0.1:8123/index.html#/season'); await page.waitForSelector('text=Start season');
+await page.click('button:has-text("Start season")'); await page.waitForSelector('.stand', { timeout: 30000 });
+await page.click('button:has-text("Sim month")'); await page.waitForTimeout(3000);
+console.log(await page.evaluate(() => document.querySelector('.season')?.innerText.slice(0, 300)));
+await browser.close();

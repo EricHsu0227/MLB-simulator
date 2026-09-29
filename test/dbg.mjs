@@ -1,0 +1,13 @@
+import { setDataBase, loadGlobal, loadSeason, EV, WOBA_W } from '../web/js/data.js';
+import { buildTeam } from '../web/js/teams.js';
+setDataBase(new URL('../data/', import.meta.url).pathname);
+await loadGlobal();
+const S = await loadSeason(2019);
+const t = buildTeam(S, process.argv[2] || 'PIT');
+console.log(t.name, t.lg, t.dh, t.park);
+for (const x of t.lineup) console.log(x.pos, x.p.name, x.p.bats, 'PA', x.p.bat.pa, 'wOBA', x.p.bat.woba.toFixed(3), Array.from(x.p.bat.r).map(v => v.toFixed(3)).join(' '));
+console.log('rot', t.rotation.map(p => `${p.name} bf${p.pit.bf} E${p.pit.endur.toFixed(0)} w${p.pit.wobaAgainst.toFixed(3)}`));
+console.log('pen', t.bullpen.map(p => `${p.name}:${p.role} bf${p.pit.bf} E${p.pit.endur.toFixed(0)} w${p.pit.wobaAgainst.toFixed(3)}`));
+console.log('bench', t.bench.map(p => `${p.name} ${p.bat.pa}`));
+import { baselineRates } from '../web/js/data.js';
+const b = baselineRates(S, t.lg); console.log('base bat', Array.from(b.bat).map(v=>v.toFixed(4)).join(' '), 'pit', Array.from(b.pit).map(v=>v.toFixed(4)).join(' '), 'batP', Array.from(b.batP).map(v=>v.toFixed(4)).join(' '));
