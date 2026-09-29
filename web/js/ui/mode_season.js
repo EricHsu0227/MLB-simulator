@@ -6,6 +6,7 @@ import { League, dailyTeam, newRuntime } from '../league.js';
 import { playoffFromLeague, historicFormat } from '../post.js';
 import { PostseasonView } from './postview.js';
 import { GameView, teamLabel } from './gameview.js';
+import { archiveGame, registerUniverse } from '../archive.js';
 
 const DIV = { E: 'East', C: 'Central', W: 'West', '': '' };
 
@@ -20,8 +21,11 @@ export async function createHistoricLeague(year, opts = {}, progress) {
   const reg = S.games.filter(g => g.type === 'R' && codes.includes(g.vis) && codes.includes(g.home));
   const d0 = dayNum(reg[0].date);
   const schedule = reg.map(g => ({ day: dayNum(g.date) - d0, home: g.home, away: g.vis, date: g.date }));
-  const lg = new League(entries, schedule, { method: opts.method || 'odds', dhRule: opts.dhRule || 'era', ghost: year >= 2020, seed: opts.seed });
-  lg.S = S; lg.year = year;
+  const uni = `season-${year}-${Date.now().toString(36)}`;
+  registerUniverse(uni, `${year} season replay`);
+  const lg = new League(entries, schedule, { method: opts.method || 'odds', dhRule: opts.dhRule || 'era', ghost: year >= 2020, seed: opts.seed,
+    onGame: (g, r) => archiveGame(r.sim, { universe: uni, key: `${g.away}@${g.home}#${g.day}`, kind: 'R', date: g.date || null, label: `${year} season` }) });
+  lg.S = S; lg.year = year; lg.universe = uni;
   return lg;
 }
 
@@ -220,7 +224,9 @@ export class SeasonView {
       t.dh = lg.dhFor(lg.by.get(isHome ? e.id : opp.entry.id));
       return t;
     };
-    this.po = new PostseasonView(ps, { title: this.o.title + ' — playoffs', prepare, simOpts: { method: lg.opts.method, ghost: false }, showYear: this.o.kind === 'custom' });
+    const uni = lg.universe;
+    this.po = new PostseasonView(ps, { title: this.o.title + ' — playoffs', prepare, simOpts: { method: lg.opts.method, ghost: false }, showYear: this.o.kind === 'custom',
+      archiveMeta: uni ? (node, pg) => ({ universe: uni, key: `PO${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${node.label} G${pg.gameNo + 1}` }) : null });
     this.render();
   }
 

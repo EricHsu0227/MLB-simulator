@@ -3,6 +3,7 @@ import { h, clear, select, spinner, nextFrame, card } from './common.js';
 import { loadSeason } from '../data.js';
 import { historicPostseason, historicPrepare } from '../post.js';
 import { PostseasonView } from './postview.js';
+import { registerUniverse } from '../archive.js';
 
 export async function renderPostMode(root, ctx) {
   const { index } = ctx;
@@ -37,7 +38,9 @@ export async function renderPostMode(root, ctx) {
     const ps = historicPostseason(S);
     const prep = historicPrepare(S, { realSubs: st.realSubs });
     clear(view);
-    const pv = new PostseasonView(ps, { title: `${st.year} postseason replay`, historic: true, prepare: prep, simOpts: { method: st.method } });
+    const uni = `post-${st.year}`; registerUniverse(uni, `${st.year} postseason replay`);
+    const pv = new PostseasonView(ps, { title: `${st.year} postseason replay`, historic: true, prepare: prep, simOpts: { method: st.method },
+      archiveMeta: (node, pg) => ({ universe: uni, key: `${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${node.label} G${pg.gameNo + 1}` }) });
     view.appendChild(pv.root);
     view.scrollIntoView({ behavior: 'smooth' });
   }

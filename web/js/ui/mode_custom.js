@@ -5,6 +5,7 @@ import { buildTeam } from '../teams.js';
 import { League, structuredSchedule, dailyTeam, newRuntime, bracketNodes, Postseason } from '../league.js';
 import { SeasonView } from './mode_season.js';
 import { PostseasonView } from './postview.js';
+import { archiveGame, registerUniverse } from '../archive.js';
 
 const NEEDS = [[1, 'Single game'], [2, 'Best of 3'], [3, 'Best of 5'], [4, 'Best of 7'], [5, 'Best of 9']];
 
@@ -176,8 +177,11 @@ export async function renderCustomMode(root, ctx) {
     clear(status);
     if (st.format === 'league') {
       const schedule = structuredSchedule(entries, st.sched);
-      const lg = new League(entries, schedule, { method: st.method, dhRule: st.dhRule, ghost: false });
-      lg.S = null;
+      const uni = `custom-${Date.now().toString(36)}`;
+      registerUniverse(uni, `Custom league: ${st.name}`);
+      const lg = new League(entries, schedule, { method: st.method, dhRule: st.dhRule, ghost: false,
+        onGame: (g, r) => archiveGame(r.sim, { universe: uni, key: `${g.away}@${g.home}#${g.day}`, kind: 'R', label: st.name }) });
+      lg.S = null; lg.universe = uni;
       const cfg = { ...st.playoff, needs: st.playoff.needs.slice(), finalLabel: `${st.name} Final` };
       const view = new SeasonView(lg, { title: st.name, kind: 'custom', playoffCfg: cfg });
       clear(root);
@@ -199,7 +203,10 @@ export async function renderCustomMode(root, ctx) {
         t.dh = tl.dhFor(isHome ? e : opp.entry);
         return t;
       };
-      const pv = new PostseasonView(ps, { title: `${st.name} — tournament`, prepare, simOpts: { method: st.method }, showYear: false });
+      const uni = `tourn-${Date.now().toString(36)}`;
+      registerUniverse(uni, `Tournament: ${st.name}`);
+      const pv = new PostseasonView(ps, { title: `${st.name} — tournament`, prepare, simOpts: { method: st.method }, showYear: false,
+        archiveMeta: (node, pg) => ({ universe: uni, key: `${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${st.name} R${node.round + 1} G${pg.gameNo + 1}` }) });
       clear(root);
       root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => renderCustomMode(root, ctx) }, '‹ Edit tournament'), pv.root));
     }

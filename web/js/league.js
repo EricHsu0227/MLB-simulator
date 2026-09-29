@@ -171,6 +171,7 @@ export class League {
     this.stats.addGame(r, [g.away, g.home]);
     const rec = { day: g.day, home: g.home, away: g.away, hs, as, innings: r.innings };
     g.done = true; g.rec = rec;
+    if (this.opts.onGame) this.opts.onGame(g, r);
     this.results.push(rec);
     while (this.pos < this.schedule.length && this.schedule[this.pos].done) this.pos++;
     return rec;

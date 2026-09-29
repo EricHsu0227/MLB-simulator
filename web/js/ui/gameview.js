@@ -3,6 +3,7 @@ import { h, clear, ip, f3, select, table, POS } from './common.js';
 import { ordinal } from '../engine.js';
 import { batLine } from '../data.js';
 import { fieldSVG, animateEntry } from './field.js';
+import { archiveGame } from '../archive.js';
 
 export const teamLabel = t => `${t.year} ${t.name}`;
 const short = n => { const p = n.split(' '); return p.length > 1 ? p[p.length - 1] : n; };
@@ -86,6 +87,7 @@ export class GameView {
     this._fin = true;
     this.tab = 'box';
     this.refresh();
+    if (this.opts.archive) archiveGame(this.sim, this.opts.archive);
     if (this.opts.onFinish) this.opts.onFinish(this.sim.result(), this);
   }
 

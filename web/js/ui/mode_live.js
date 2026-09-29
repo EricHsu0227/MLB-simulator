@@ -4,9 +4,12 @@ import { loadSeason, loadJSONGz } from '../data.js';
 import { Sim } from '../engine.js';
 import { buildTeam } from '../teams.js';
 import { GameView, teamLabel } from './gameview.js';
-import { fetchLive, saveLive, loadSavedLive, loadResults, saveResult, clearResults, buildLiveSeason, buildLiveTeam, liveGameTeams, standingsFrom, projectSeason, MLB_TEAM } from '../live.js';
+import { fetchLive, saveLive, loadSavedLive, loadResults, saveResult, clearResults, buildLiveSeason, buildLiveTeam, liveGameTeams, standingsFrom, projectSeason, buildLivePostseason, MLB_TEAM } from '../live.js';
+import { PostseasonView } from './postview.js';
+import { archiveGame, registerUniverse, universeGames } from '../archive.js';
 
 const YEAR = 2026;
+const UNI = 'live2026';
 const DIVN = { E: 'East', C: 'Central', W: 'West' };
 const STALE_MS = 20 * 60 * 1000;
 
@@ -50,11 +53,12 @@ export async function renderLiveMode(root, ctx) {
     st.useLive = live.flags.stats === 'mlb' && live.flags.rosters === 'mlb';
     st.S = st.useLive ? buildLiveSeason(live, st.prior, st.idmap) : null;
     st.teamCache = new Map();
+    st.ps = null; st.psView = null;
     st.meta = {};
     const src = st.S || st.prior;
     for (const c of Object.keys(MLB_TEAM).map(k => MLB_TEAM[k])) { const t = src.teams[c] || {}; st.meta[c] = { name: live.teams[c]?.name || t.n || c, lg: live.teams[c]?.lg || t.lg, div: live.teams[c]?.div || t.d || '' }; }
     if (!st.date) {
-      const days = live.schedule.map(g => g.date);
+      const days = live.schedule.concat(live.post || []).map(g => g.date);
       const lo = Math.min(...days), hi = Math.max(...days), t = todayNum();
       st.date = t < lo ? lo : t > hi ? hi : t;
     }
@@ -92,15 +96,17 @@ export async function renderLiveMode(root, ctx) {
         h('span', { class: 'pill' }, `Updated ${when}`)),
       live.errors.length ? h('details', { class: 'small muted' }, h('summary', null, `${live.errors.length} data note${live.errors.length > 1 ? 's' : ''}`), h('ul', null, live.errors.map(e => h('li', null, e)))) : null,
       !st.useLive ? h('p', { class: 'small muted' }, 'The live MLB feed could not be reached from this browser, so the app is using the bundled schedule and last season’s player ratings. Tap Refresh once you’re online.') : null,
-      h('div', { class: 'tabs' }, [['games', 'Games'], ['standings', 'Standings'], ['proj', 'Projection'], ['mine', 'My sims'], ['teams', 'Teams']].map(([k, l]) => h('button', { class: 'tab' + (st.tab === k ? ' on' : ''), onclick: () => { st.tab = k; drawHead(); draw(); } }, l)))].filter(Boolean));
+      h('div', { class: 'row wrap' }, h('a', { class: 'btn sm', href: '#/stats' }, '📊 Stats & game logs')),
+      h('div', { class: 'tabs' }, [['games', 'Games'], ['post', 'Postseason'], ['standings', 'Standings'], ['proj', 'Projection'], ['mine', 'My sims'], ['teams', 'Teams']].map(([k, l]) => h('button', { class: 'tab' + (st.tab === k ? ' on' : ''), onclick: () => { st.tab = k; drawHead(); draw(); } }, l)))].filter(Boolean));
   }
 
   // ------------------------------------------------------------ games tab
   function gamesTab() {
     const live = st.live, results = loadResults(YEAR);
-    const days = [...new Set(live.schedule.map(g => g.date))].sort((a, b) => a - b);
+    const every = live.schedule.concat(live.post || []);
+    const days = [...new Set(every.map(g => g.date))].sort((a, b) => a - b);
     const lo = days[0], hi = days[days.length - 1];
-    const day = live.schedule.filter(g => g.date === st.date).sort((a, b) => (a.dt || '').localeCompare(b.dt || '') || String(a.pk).localeCompare(String(b.pk)));
+    const day = every.filter(g => g.date === st.date).sort((a, b) => (a.dt || '').localeCompare(b.dt || '') || String(a.pk).localeCompare(String(b.pk)));
     const out = h('div', { class: 'stack' });
     const nav = h('div', { class: 'row wrap datenav' },
       h('button', { class: 'btn', onclick: () => { st.date = shiftDate(st.date, -1); draw(); } }, '‹'),
@@ -126,7 +132,7 @@ export async function renderLiveMode(root, ctx) {
     const pp = (p) => p ? p.name : 'TBD';
     const line = (c, score, pp0, win) => h('div', { class: 'gline' + (win ? ' win' : '') }, h('span', { class: 'gname' }, nm(c)), h('span', { class: 'gpp muted small' }, pp0 ? pp0 : ''), h('b', { class: 'gscore' }, score ?? ''));
     const card = h('div', { class: 'gamecard' },
-      h('div', { class: 'row between' }, status, g.venue ? h('span', { class: 'muted small' }, g.venue) : null),
+      h('div', { class: 'row between' }, status, g.gt && g.gt !== 'R' ? h('span', { class: 'pill live' }, (g.series || 'Postseason') + (g.sgn ? ` · G${g.sgn}` : '')) : (g.venue ? h('span', { class: 'muted small' }, g.venue) : null)),
       line(g.away, final || live ? g.as : '', g.app ? 'SP ' + pp(g.app) : '', final && g.as > g.hs),
       line(g.home, final || live ? g.hs : '', g.hpp ? 'SP ' + pp(g.hpp) : '', final && g.hs > g.as));
     if (mine) {
@@ -137,7 +143,8 @@ export async function renderLiveMode(root, ctx) {
     }
     card.appendChild(h('div', { class: 'btnrow' },
       h('button', { class: 'btn sm primary', onclick: () => playGame(g) }, mine ? 'Play again' : 'Play it'),
-      h('button', { class: 'btn sm', onclick: async () => { await quickSim(g); toast('Simmed and saved'); draw(); } }, 'Quick sim')));
+      h('button', { class: 'btn sm', onclick: async () => { await quickSim(g); toast('Simmed and saved'); draw(); } }, 'Quick sim'),
+      mine ? h('button', { class: 'btn sm', onclick: () => { ctx.state.stats = { ...(ctx.state.stats || {}), universe: UNI, game: `${UNI}:${g.pk}`, tab: 'games', kind: 'all' }; location.hash = '#/stats'; } }, 'Box score & log') : null));
     return card;
   }
 
@@ -150,7 +157,9 @@ export async function renderLiveMode(root, ctx) {
     const { sim } = await makeSim(g);
     const r = sim.playGame();
     saveResult(YEAR, g.pk, { as: r.score[0], hs: r.score[1], away: g.away, home: g.home, date: g.date, ts: Date.now() });
+    archiveGame(r.sim, archiveMetaFor(g));
   }
+  function archiveMetaFor(g) { registerUniverse(UNI, 'Live 2026 season'); return { universe: UNI, key: g.pk, kind: g.gt && g.gt !== 'R' ? 'post' : 'R', date: g.date, label: g.gt && g.gt !== 'R' ? `${g.series || 'Postseason'} G${g.sgn || ''}` : `${YEAR} season` }; }
   async function simDay(day) {
     for (const g of day) { await quickSim(g); await nextFrame(); }
     toast(`Simmed ${day.length} games`); draw();
@@ -163,11 +172,72 @@ export async function renderLiveMode(root, ctx) {
       title: `${st.meta[g.away].name} at ${st.meta[g.home].name}`,
       subtitle: `${fmtDate(g.date)} · ${g.venue || ''}${t.note ? ' · ' + t.note : ''}`,
       continueLabel: 'Back to games',
+      archive: archiveMetaFor(g),
       onFinish: r => saveResult(YEAR, g.pk, { as: r.score[0], hs: r.score[1], away: g.away, home: g.home, date: g.date, ts: Date.now() }),
       onContinue: () => { drawHead(); draw(); },
     });
     clear(body);
     body.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => { gv.destroy(); draw(); } }, '‹ Games'), gv.root));
+  }
+
+  // ------------------------------------------------------------ postseason
+  function postTab() {
+    const out = h('div', { class: 'stack' });
+    if (!st.ps) {
+      st.ps = buildLivePostseason(st.live, st.meta);
+      st.psView = null;
+    }
+    const ps = st.ps;
+    const prepare = (node, entry, gameNo, opp, isHome) => {
+      const base = teamFor(entry.code);
+      const t = Object.assign({}, base);
+      const rot = base.rotation.length ? base.rotation.slice(0, 4) : [base.sp];
+      // the real probable pitcher for this game number, when MLB has named one
+      const rg = node.realGames && node.realGames[gameNo];
+      let sp = rot[gameNo % rot.length];
+      if (rg && st.useLive) {
+        const pp = rg.home === entry.code ? rg.hpp : rg.away === entry.code ? rg.app : null;
+        if (pp) { const idx = st.S.mlbIdx.get(pp.id); if (idx !== undefined) sp = base.P(idx); }
+      }
+      t.sp = sp;
+      t.lineup = base.lineup.map(x => (x.pos === 1 ? { p: sp, pos: 1 } : x));
+      t.bullpen = base.bullpen.filter(p => p !== sp);
+      t.dh = true;
+      return t;
+    };
+    const nodeKey = n => { const [a, b] = ps.teams(n); return a && b ? `${n.round}:${[a.id, b.id].sort().join('-')}` : null; };
+    if (!st.psView) {
+      st.psView = new PostseasonView(ps, {
+        title: `${YEAR} postseason`, historic: true, prepare, simOpts: { method: ctx.state.method || 'odds' },
+        note: ps.hasReal ? 'Real matchups and results from MLB are shown. Play any series game by game or sim it — winners carry forward. Rosters refresh whenever you tap Refresh.' : 'MLB hasn’t set the bracket yet, so this is projected from today’s standings (top 3 division winners + 3 wild cards per league). Once the real series exist they replace it automatically.',
+        archiveMeta: (node, pg) => { registerUniverse(UNI, 'Live 2026 season'); return { universe: UNI, key: `PS:${nodeKey(node)}:G${pg.gameNo + 1}`, kind: 'post', label: `${node.label} G${pg.gameNo + 1}`, extra: { homeCode: pg.homeE.id, nodeKey: nodeKey(node), gameNo: pg.gameNo + 1 } }; },
+      });
+      restorePost(ps, nodeKey).then(() => st.psView && st.psView.render());
+    }
+    out.appendChild(st.psView.root);
+    return out;
+  }
+  /** Rebuild sim series state from games already saved in the archive. */
+  async function restorePost(ps, nodeKey) {
+    const games = (await universeGames(UNI)).filter(g => g.kind === 'post' && g.extra && g.extra.nodeKey);
+    if (!games.length) return;
+    let progressed = true, guard = 0;
+    while (progressed && guard++ < 20) {
+      progressed = false;
+      for (const n of ps.nodes) {
+        if (n.winner || !ps.isReady(n)) continue;
+        const key = nodeKey(n); if (!key) continue;
+        const gs = games.filter(g => g.extra.nodeKey === key).sort((a, b) => a.extra.gameNo - b.extra.gameNo);
+        if (!gs.length) continue;
+        const series = ps.ensureSeries(n);
+        for (const g of gs) {
+          if (series.over) break;
+          const homeIdx = g.extra.homeCode === series.hi.id ? 0 : 1;
+          series.record(g.score[1], g.score[0], homeIdx);
+        }
+        if (series.over) { ps.finish(n); progressed = true; }
+      }
+    }
   }
 
   // ------------------------------------------------------------ standings
@@ -246,7 +316,7 @@ export async function renderLiveMode(root, ctx) {
 
   function draw() {
     clear(body);
-    const tab = { games: gamesTab, standings: standingsTab, proj: projTab, mine: mineTab, teams: teamsTab }[st.tab] || gamesTab;
+    const tab = { games: gamesTab, post: postTab, standings: standingsTab, proj: projTab, mine: mineTab, teams: teamsTab }[st.tab] || gamesTab;
     body.appendChild(tab());
   }
 

@@ -7,7 +7,7 @@ export const API = 'https://statsapi.mlb.com/api/v1';
 export const MLB_TEAM = { 108: 'ANA', 109: 'ARI', 110: 'BAL', 111: 'BOS', 112: 'CHN', 113: 'CIN', 114: 'CLE', 115: 'COL', 116: 'DET', 117: 'HOU', 118: 'KCA', 119: 'LAN', 120: 'WAS', 121: 'NYN', 133: 'ATH', 134: 'PIT', 135: 'SDN', 136: 'SEA', 137: 'SFN', 138: 'SLN', 139: 'TBA', 140: 'TEX', 141: 'TOR', 142: 'MIN', 143: 'PHI', 144: 'ATL', 145: 'CHA', 146: 'MIA', 147: 'NYA', 158: 'MIL' };
 export const RS_TO_MLB = Object.fromEntries(Object.entries(MLB_TEAM).map(([k, v]) => [v, +k]));
 const DIV_OF = { 200: 'W', 201: 'E', 202: 'C', 203: 'W', 204: 'E', 205: 'C' };   // AL W/E/C, NL W/E/C division ids
-const TEAM_INFO = {   // fallback names/leagues/divisions if /teams is unavailable
+export const TEAM_INFO = {   // fallback names/leagues/divisions if /teams is unavailable
   ANA: ['Los Angeles Angels', 'AL', 'W'], ARI: ['Arizona Diamondbacks', 'NL', 'W'], ATH: ['Athletics', 'AL', 'W'], ATL: ['Atlanta Braves', 'NL', 'E'], BAL: ['Baltimore Orioles', 'AL', 'E'],
   BOS: ['Boston Red Sox', 'AL', 'E'], CHA: ['Chicago White Sox', 'AL', 'C'], CHN: ['Chicago Cubs', 'NL', 'C'], CIN: ['Cincinnati Reds', 'NL', 'C'], CLE: ['Cleveland Guardians', 'AL', 'C'],
   COL: ['Colorado Rockies', 'NL', 'W'], DET: ['Detroit Tigers', 'AL', 'C'], HOU: ['Houston Astros', 'AL', 'W'], KCA: ['Kansas City Royals', 'AL', 'C'], LAN: ['Los Angeles Dodgers', 'NL', 'W'],
@@ -32,7 +32,7 @@ const ymd = s => +s.replace(/-/g, '');
 // ---------------------------------------------------------------- fetching
 /** Fetch everything the live mode needs. Each part degrades independently. */
 export async function fetchLive(year, onStatus = () => {}) {
-  const live = { year, fetchedAt: Date.now(), schedule: [], teams: {}, hit: {}, pit: {}, roster: {}, people: {}, flags: { schedule: 'bundled', stats: 'none', rosters: 'none' }, errors: [] };
+  const live = { year, fetchedAt: Date.now(), schedule: [], post: [], teams: {}, hit: {}, pit: {}, roster: {}, people: {}, flags: { schedule: 'bundled', stats: 'none', rosters: 'none' }, errors: [] };
   const step = async (label, fn) => { onStatus(label); try { await fn(); } catch (e) { live.errors.push(`${label}: ${e.message}`); } };
 
   await step('Loading teams…', async () => {
@@ -43,8 +43,7 @@ export async function fetchLive(year, onStatus = () => {}) {
       live.teams[code] = { id: t.id, name: t.name, lg, div: DIV_OF[t.division?.id] || (TEAM_INFO[code] || [])[2] || '', venue: t.venue?.name || '' };
     }
   });
-  await step('Loading schedule…', async () => {
-    const j = await getJSON(`${API}/schedule?sportId=1&season=${year}&gameType=R&startDate=${year}-03-01&endDate=${year}-11-01&hydrate=probablePitcher,team`, 30000);
+  const parseGames = (j, dflt) => {
     const out = [];
     for (const d of j.dates || []) for (const g of d.games || []) {
       const a = g.teams?.away, h = g.teams?.home;
@@ -53,13 +52,22 @@ export async function fetchLive(year, onStatus = () => {}) {
       out.push({
         pk: g.gamePk, date: ymd(g.officialDate || d.date), dt: g.gameDate, num: g.doubleHeader === 'N' ? 0 : (g.gameNumber || 1),
         away: ac, home: hc, state: g.status?.abstractGameState || 'Preview', detail: g.status?.detailedState || '',
-        as: a.score ?? null, hs: h.score ?? null,
+        as: a.score ?? null, hs: h.score ?? null, gt: g.gameType || dflt,
         app: a.probablePitcher ? { id: a.probablePitcher.id, name: a.probablePitcher.fullName } : null,
         hpp: h.probablePitcher ? { id: h.probablePitcher.id, name: h.probablePitcher.fullName } : null,
-        venue: g.venue?.name || '',
+        venue: g.venue?.name || '', series: g.seriesDescription || '', sgn: g.seriesGameNumber || 0, gis: g.gamesInSeries || 0,
       });
     }
+    return out;
+  };
+  await step('Loading schedule…', async () => {
+    const j = await getJSON(`${API}/schedule?sportId=1&season=${year}&gameType=R&startDate=${year}-03-01&endDate=${year}-11-01&hydrate=probablePitcher,team`, 30000);
+    const out = parseGames(j, 'R');
     if (out.length) { live.schedule = out; live.flags.schedule = 'mlb'; }
+  });
+  await step('Loading postseason…', async () => {
+    const j = await getJSON(`${API}/schedule?sportId=1&season=${year}&gameType=F,D,L,W&startDate=${year}-09-15&endDate=${year}-11-30&hydrate=probablePitcher,team`, 30000);
+    live.post = parseGames(j, 'D');
   });
   if (!live.schedule.length) await step('Loading bundled schedule…', async () => {
     const rows = await loadJSONGz(`data/live/${year}schedule.json.gz`);
@@ -227,7 +235,7 @@ export function buildLiveSeason(live, prior, idmap) {
   for (const g of live.schedule) if (g.venue && /^[A-Z]{3}\d\d$/.test(g.venue)) (homeSite[g.home] ||= {})[g.venue] = 1 + (homeSite[g.home][g.venue] || 0);
   for (const [code, o] of Object.entries(homeSite)) { const best = Object.entries(o).sort((a, b) => b[1] - a[1])[0][0]; S.teams[code].p = best; }
   // records from finals
-  for (const g of live.schedule) if (g.state === 'Final' && g.as !== null && g.hs !== null) {
+  for (const g of live.schedule) if (g.state === 'Final' && g.as !== null && g.hs !== null && (!g.gt || g.gt === 'R')) {
     const A = S.teams[g.away], H = S.teams[g.home];
     A.rs += g.as; A.ra += g.hs; H.rs += g.hs; H.ra += g.as;
     if (g.as > g.hs) { A.w++; H.l++; } else if (g.hs > g.as) { H.w++; A.l++; }
@@ -332,7 +340,7 @@ export function standingsFrom(schedule, teams) {
   const rec = {};
   for (const c of Object.keys(teams)) rec[c] = { code: c, w: 0, l: 0, rs: 0, ra: 0, home: [0, 0], away: [0, 0] };
   for (const g of schedule) {
-    if (g.state !== 'Final' || g.as === null || g.hs === null) continue;
+    if (g.state !== 'Final' || g.as === null || g.hs === null || (g.gt && g.gt !== 'R')) continue;
     const A = rec[g.away], H = rec[g.home]; if (!A || !H) continue;
     A.rs += g.as; A.ra += g.hs; H.rs += g.hs; H.ra += g.as;
     if (g.as > g.hs) { A.w++; H.l++; A.away[0]++; H.home[1]++; } else if (g.hs > g.as) { H.w++; A.l++; H.home[0]++; A.away[1]++; }
@@ -351,7 +359,7 @@ export async function projectSeason(getTeam, teamsMeta, schedule, n, onProgress)
   const codes = Object.keys(teamsMeta);
   const teams = Object.fromEntries(codes.map(c => [c, getTeam(c)]));
   const base = standingsFrom(schedule, teamsMeta);
-  const remaining = schedule.filter(g => g.state !== 'Final' && !/postponed|cancel/i.test(g.detail || ''));
+  const remaining = schedule.filter(g => (!g.gt || g.gt === 'R') && g.state !== 'Final' && !/postponed|cancel/i.test(g.detail || ''));
   const d0 = remaining.length ? Math.min(...remaining.map(g => dnum(g.date))) : 0;
   const sched = remaining.map(g => ({ day: dnum(g.date) - d0, home: g.home, away: g.away, date: g.date }));
   const agg = Object.fromEntries(codes.map(c => [c, { w: 0, l: 0, div: 0, wc: 0, po: 0, best: 0 }]));
@@ -379,4 +387,106 @@ export async function projectSeason(getTeam, teamsMeta, schedule, n, onProgress)
     await new Promise(r => setTimeout(r, 0));
   }
   return Object.fromEntries(codes.map(c => [c, { w: agg[c].w / n, l: agg[c].l / n, div: agg[c].div / n, wc: agg[c].wc / n, po: agg[c].po / n, best: agg[c].best / n, cur: base[c] }]));
+}
+
+// ---------------------------------------------------------------- postseason bracket
+import { Postseason, bracketNodes } from './league.js';
+export const ROUND_LABEL = { WC: 'Wild Card Series', DV: 'Division Series', LC: 'League Championship Series', WS: 'World Series' };
+const GT_ROUND = { F: 'WC', D: 'DV', L: 'LC', W: 'WS' };
+const ROUND_ORDER = ['WC', 'DV', 'LC', 'WS'];
+
+/** Group real postseason games into series: [{round, teams:[home of G1, away of G1], games, wins:{code:n}, done, need}] */
+export function realSeries(post) {
+  const by = new Map();
+  for (const g of post.slice().sort((a, b) => a.date - b.date || (a.dt || '').localeCompare(b.dt || ''))) {
+    const round = GT_ROUND[g.gt] || 'DV';
+    const key = round + ':' + [g.away, g.home].sort().join('-');
+    if (!by.has(key)) by.set(key, { key, round, teams: [g.home, g.away], games: [], wins: { [g.home]: 0, [g.away]: 0 }, need: 0 });
+    const s = by.get(key);
+    s.games.push(g);
+    if (g.state === 'Final' && g.as !== null) s.wins[g.hs > g.as ? g.home : g.away]++;
+    if (g.gis) s.need = Math.max(s.need, Math.ceil(g.gis / 2));
+  }
+  const defNeed = { WC: 2, DV: 3, LC: 4, WS: 4 };
+  for (const s of by.values()) { if (!s.need) s.need = defNeed[s.round]; s.done = Math.max(...Object.values(s.wins)) >= s.need; s.winner = s.done ? Object.keys(s.wins).find(c => s.wins[c] >= s.need) : null; }
+  return [...by.values()];
+}
+
+const wpct = r => (r.w + r.l ? r.w / (r.w + r.l) : 0);
+
+/** Seeds (best first) per league from real standings, overridden by real Wild Card pairings when MLB has set them. */
+function leagueSeeds(lg, rec, meta, real) {
+  const codes = Object.keys(meta).filter(c => meta[c].lg === lg);
+  const key = c => wpct(rec[c]) + (rec[c].rs - rec[c].ra) / 1e7;
+  const winners = [];
+  for (const d of ['E', 'C', 'W']) { const dv = codes.filter(c => meta[c].div === d).sort((a, b) => key(b) - key(a)); if (dv[0]) winners.push(dv[0]); }
+  winners.sort((a, b) => key(b) - key(a));
+  const wcs = codes.filter(c => !winners.includes(c)).sort((a, b) => key(b) - key(a)).slice(0, 3);
+  let seeds = winners.concat(wcs);
+  const wc = real.filter(s => s.round === 'WC' && s.teams.every(t => meta[t]?.lg === lg));
+  if (wc.length) {
+    // MLB has set the Wild Card round: 3v6 and 4v5 with the better seed at home
+    let pairs = wc.slice().sort((a, b) => key(b.teams[0]) - key(a.teams[0]));
+    const inWC = new Set(pairs.flatMap(p => p.teams));
+    const byes = seeds.filter(c => !inWC.has(c) && winners.includes(c)).slice(0, 2);
+    // if the Division Series already exist, they settle which pair is 3v6 and which is 4v5 (seed 1 meets the 4/5 winner)
+    const ds = real.filter(x => x.round === 'DV' && byes.some(b => x.teams.includes(b)));
+    const top = ds.find(x => x.teams.includes(byes[0]));
+    if (top && pairs.length === 2) {
+      const opp = top.teams.find(t => t !== byes[0]);
+      const i = pairs.findIndex(p => p.teams.includes(opp));
+      if (i === 0) pairs = [pairs[1], pairs[0]];
+    }
+    const s34 = pairs.map(p => p.teams[0]), s65 = pairs.map(p => p.teams[1]);
+    if (byes.length === 2 && pairs.length === 2) seeds = [...byes, s34[0], s34[1], s65[1], s65[0]];
+  }
+  return seeds;
+}
+
+/**
+ * Postseason for the live season: real matchups/results wherever MLB has them, otherwise a projected 12-team bracket
+ * from the current standings. Real results feed forward (defaultActual) so you can play any series and carry on.
+ */
+export function buildLivePostseason(live, meta) {
+  const rec = standingsFrom(live.schedule, meta);
+  const real = realSeries(live.post || []);
+  const entry = c => ({ id: c, code: c, name: meta[c].name, year: live.year, lg: meta[c].lg, rec: [rec[c].w, rec[c].l] });
+  const nodes = [];
+  const finalists = [];
+  for (const lg of ['AL', 'NL']) {
+    const seeds = leagueSeeds(lg, rec, meta, real).slice(0, 6);
+    if (seeds.length < 2) continue;
+    const b = bracketNodes(seeds.map(entry), [2, 3, 4], lg + ' ');
+    const base = nodes.length;
+    const rounds = ['WC', 'DV', 'LC'];
+    for (const n of b.nodes) {
+      n.slots = n.slots.map(sl => (sl.node !== undefined ? { node: sl.node + base } : sl));
+      n.round = rounds[n.round]; n.label = `${lg} ${ROUND_LABEL[n.round]}`; n.lg = lg;
+      nodes.push(n);
+    }
+    finalists.push({ node: nodes.length - 1 });
+  }
+  if (finalists.length === 2) nodes.push({ label: ROUND_LABEL.WS, round: 'WS', slots: finalists.map(f => ({ node: f.node })), need: 4 });
+  const ps = new Postseason(nodes, {
+    defaultActual: true,
+    higherSeed: (A, B, n) => {
+      if (n.actualTeams && n.actualTeams.includes(A.id) && n.actualTeams.includes(B.id)) return n.actualTeams[0] === A.id ? -1 : 1;
+      return wpct({ w: B.rec[0], l: B.rec[1] }) - wpct({ w: A.rec[0], l: A.rec[1] });
+    },
+  });
+  // attach real series (feeders first, so real winners resolve downstream teams)
+  for (const n of ps.nodes) {
+    const [a, b] = ps.teams(n);
+    if (!a || !b) continue;
+    const rs = real.find(s => s.round === n.round && s.teams.includes(a.id) && s.teams.includes(b.id));
+    if (!rs) continue;
+    n.need = rs.need;
+    n.actualTeams = rs.teams;
+    n.realGames = rs.games;
+    n.actual = { wins: rs.teams.map(t => rs.wins[t]), games: rs.games, winner: rs.winner, inProgress: !rs.done };
+    if (rs.done) n.actualWinner = entry(rs.winner);
+  }
+  ps.real = real;
+  ps.hasReal = real.length > 0;
+  return ps;
 }

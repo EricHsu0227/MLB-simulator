@@ -159,3 +159,9 @@ body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-ins
 .datenav input[type=date] { font: inherit; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: .3rem .5rem; }
 #nav a.on.livelink { color: #fff !important; background: var(--bad); }
 @media (max-width: 720px) { .gv-ctrl { order: -1; } .gv-ctrl .final { font-size: 1.05rem; } }
+/* account */
+.top #acct { margin-left: auto; font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); border-radius: 999px; padding: .3rem .8rem; min-width: 2.2rem; }
+.top #acct.on { background: var(--accent); color: var(--accent-ink); font-weight: 800; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; } .avatar.ph { display: inline-grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 800; }
+.applebtn { background: #000; color: #fff; border-color: #000; }
+@media (max-width: 720px) { .top #acct { position: absolute; right: 12px; top: max(.6rem, env(safe-area-inset-top)); } }

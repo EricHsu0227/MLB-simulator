@@ -4,6 +4,7 @@ import { loadSeason } from '../data.js';
 import { Sim } from '../engine.js';
 import { realGameTeam } from '../teams.js';
 import { GameView, teamLabel } from './gameview.js';
+import { registerUniverse } from '../archive.js';
 
 const TYPES = [['R', 'Regular season'], ['post', 'Postseason'], ['AS', 'All-Star Game'], ['all', 'All games']];
 const ROUND = { WC: 'Wild Card', DV: 'Division Series', LC: 'LCS', WS: 'World Series', AS: 'All-Star Game', R: '' };
@@ -160,12 +161,14 @@ export async function renderGameMode(root, ctx) {
         seed, dh: !!g.dh, method: setup.method, ghost: g.type === 'R' && S.y >= 2020,
         script: { 0: a.script, 1: hm.script }, mgr: { 0: setup.mgrA, 1: setup.mgrH },
       });
+      registerUniverse('replays', 'Historic game replays');
       clear(root);
       const gv = new GameView(sim, {
         title: `${fmtDate(g.date)} — ${teamLabel(a)} at ${teamLabel(hm)}`,
         subtitle: ROUND[g.type] || 'Regular season',
         real: realGamePanel(S, g), realTitle: 'Real game',
         continueLabel: 'Play again',
+        archive: { universe: 'replays', key: `${g.date}-${g.vis}@${g.home}-${g.num}-${Date.now()}`, kind: 'hist', date: g.date, label: `${S.y} ${ROUND[g.type] || 'regular season'} replay` },
         onContinue: () => openGame(g),
       });
       root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => { gv.destroy(); openGame(g); } }, '‹ Game setup'), gv.root));

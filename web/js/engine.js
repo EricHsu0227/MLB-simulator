@@ -796,7 +796,7 @@ export class Sim {
   result() {
     const st = this.st;
     return { away: this.teams[0], home: this.teams[1], score: st.score.slice(), innings: st.inning, lineScore: st.lineScore, box: st.box, pbox: st.pbox, over: st.over,
-      winner: st.score[0] > st.score[1] ? 0 : st.score[1] > st.score[0] ? 1 : -1, hits: st.hits, decisions: this.decisions(), pitSeen: st.pitSeen, batSeen: st.batSeen, walkoff: !!st.walkoff };
+      winner: st.score[0] > st.score[1] ? 0 : st.score[1] > st.score[0] ? 1 : -1, hits: st.hits, decisions: this.decisions(), pitSeen: st.pitSeen, batSeen: st.batSeen, walkoff: !!st.walkoff, sim: this };
   }
 
   // ---------------------------------------------------------------- text

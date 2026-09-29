@@ -1,11 +1,11 @@
 // Service worker: app shell is network-first (updates arrive on next load), data files are cache-first
 // so seasons you've opened work offline. Live-API requests are never cached here.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = `diamond-shell-${VERSION}`, DATA = `diamond-data-${VERSION}`;
 const SHELL_FILES = ['./', 'index.html', 'manifest.webmanifest', 'web/css/style.css', 'web/icons/icon-192.png', 'web/icons/apple-touch-icon.png',
   'web/js/app.js', 'web/js/data.js', 'web/js/engine.js', 'web/js/teams.js', 'web/js/league.js', 'web/js/post.js', 'web/js/live.js',
   'web/js/ui/common.js', 'web/js/ui/field.js', 'web/js/ui/gameview.js', 'web/js/ui/postview.js', 'web/js/ui/mode_game.js', 'web/js/ui/mode_post.js',
-  'web/js/ui/mode_season.js', 'web/js/ui/mode_custom.js', 'web/js/ui/mode_live.js', 'data/idmap.json.gz', 'data/index.json', 'data/global.json.gz'];
+  'web/js/ui/mode_season.js', 'web/js/ui/mode_custom.js', 'web/js/ui/mode_live.js', 'web/js/store.js', 'web/js/archive.js', 'web/js/cloud.js', 'web/js/config.js', 'web/js/ui/mode_stats.js', 'web/js/ui/gamedetail.js', 'web/js/ui/account.js', 'data/idmap.json.gz', 'data/index.json', 'data/global.json.gz'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => Promise.all(SHELL_FILES.map(f => c.add(f).catch(() => {})))).then(() => self.skipWaiting()));

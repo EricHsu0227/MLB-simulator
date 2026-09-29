@@ -43,6 +43,18 @@ No hosting? On the same Wi-Fi run `python3 -m http.server 8000 --bind 0.0.0.0` o
 4. **Custom league & tournament** — mix any team-seasons (1927 Yankees vs. 2001 Mariners…), set leagues, divisions,
    schedule length and playoff format, or run an elimination tournament.
 
+## Saved games, stats and sign-in
+
+* **Every game is remembered.** Any game you play or sim, in any mode, is saved on your device (IndexedDB) with its full
+  box score and play-by-play. Player stats (batting and pitching, regular season and postseason separately),
+  leaders, per-player game logs and a box-score/play-by-play viewer live under **Stats & logs**. You can export and
+  import backups as JSON.
+* **Live 2026 postseason.** The Live tab has a Postseason bracket: real MLB series and results wherever MLB has set them
+  (probable pitchers, current rosters via Refresh), a projected 12-team bracket from the standings until then. Play or
+  sim any series; your winners carry forward, and your simmed series are rebuilt from the archive after a reload.
+* **Google / Apple sign-in and sync** are built in but need your own free Firebase project (only you can create the
+  Apple/Google credentials): see `docs/SETUP_LOGIN.md`. Without it everything still works, locally.
+
 ## Strategy and animation
 
 During a game you can call a sacrifice bunt, steal, hit-and-run, intentional walk, infield in, or hold the runners.

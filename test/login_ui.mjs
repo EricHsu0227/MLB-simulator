@@ -1,0 +1,13 @@
+import { createRequire } from 'node:module'; import { execSync } from 'node:child_process';
+const { chromium } = createRequire(import.meta.url)(execSync('npm root -g').toString().trim() + '/playwright');
+const b = await chromium.launch({ args: ['--no-sandbox'] }); const p = await b.newPage({ viewport: { width: 1000, height: 900 } });
+const errs = []; p.on('pageerror', e => errs.push(e.message));
+await p.route('**/web/js/config.js', r => r.fulfill({ contentType: 'text/javascript', body: "export const FIREBASE_CONFIG = { apiKey: 'x', authDomain: 'x.firebaseapp.com', projectId: 'x', appId: 'x' };" }));
+await p.route('https://www.gstatic.com/**', r => r.abort());
+await p.goto('http://127.0.0.1:8123/index.html#/stats'); await p.waitForSelector('text=Nothing saved yet, text=Batting leaders', { timeout: 20000 }).catch(() => {});
+await p.waitForTimeout(2500);
+console.log((await p.evaluate(() => document.getElementById('app').innerText)).slice(0, 700));
+console.log('nav button:', await p.textContent('#acct'));
+await p.screenshot({ path: '/tmp/claude-0/shots/login.png' });
+console.log('page errors:', errs);
+await b.close();

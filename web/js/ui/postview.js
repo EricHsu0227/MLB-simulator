@@ -3,6 +3,7 @@ import { h, clear, card } from './common.js';
 import { playSeriesGame } from '../league.js';
 import { mulberry32 } from '../engine.js';
 import { GameView, teamLabel } from './gameview.js';
+import { archiveGame } from '../archive.js';
 
 export class PostseasonView {
   /**
@@ -23,7 +24,9 @@ export class PostseasonView {
     const series = ps.ensureSeries(node);
     while (!series.over) {
       const pg = playSeriesGame(series, (e, n, o, ish) => this.o.prepare(node, e, n, o, ish), this.rng, this.o.simOpts || {});
-      pg.finish();
+      const r = pg.finish();
+      const m = this.o.archiveMeta && this.o.archiveMeta(node, pg);
+      if (m) archiveGame(r.sim, m);
     }
     ps.finish(node);
   }
@@ -38,6 +41,7 @@ export class PostseasonView {
       title: `${node.label} — Game ${pg.gameNo + 1}`,
       subtitle: `${teamLabel(pg.at)} at ${teamLabel(pg.ht)} · ${pg.gameNo ? lead : 'Best of ' + (node.need * 2 - 1)}`,
       continueLabel: '',
+      archive: this.o.archiveMeta ? this.o.archiveMeta(node, pg) : null,
       onFinish: r => {
         pg.record(r);
         gv.opts.continueLabel = series.over ? 'Series over — back to bracket' : `Next game (G${series.games.length + 1})`;
@@ -79,7 +83,8 @@ export class PostseasonView {
         h('button', { class: 'btn primary', onclick: () => this.simAll() }, 'Sim everything left'),
         h('button', { class: 'btn', onclick: () => { for (const n of ps.nodes) ps.reset(n); this.render(); } }, 'Reset')));
     this.root.appendChild(head);
-    if (this.o.historic) this.root.appendChild(h('p', { class: 'muted small' }, 'Series you have not replayed show their real result. Replay any series — if a different team wins, the next round is updated to the new matchup and you keep going from there.'));
+    if (this.o.note) this.root.appendChild(h('p', { class: 'muted small' }, this.o.note));
+    else if (this.o.historic) this.root.appendChild(h('p', { class: 'muted small' }, 'Series you have not replayed show their real result. Replay any series — if a different team wins, the next round is updated to the new matchup and you keep going from there.'));
     if (champ) this.root.appendChild(h('div', { class: 'champ' }, '🏆 ', this.name(champ), ' — champions', this.o.historic && ps.final.actualWinner && ps.final.actualWinner.id !== champ.id ? h('span', { class: 'muted' }, `  (in real life: ${ps.final.actualWinner.name})`) : null));
     const groups = new Map();
     for (const n of ps.nodes) {
@@ -112,12 +117,13 @@ export class PostseasonView {
         const home = g.home === 0 ? series.hi : series.lo, away = g.home === 0 ? series.lo : series.hi;
         return `G${g.n}: ${away.code || away.id} ${g.as}, ${home.code || home.id} ${g.hs}`;
       }).join(' · ')));
-      if (n.actualTeams) card.appendChild(h('div', { class: 'small tag' }, ps.isActualMatchup(n) ? (n.actualWinner.id === n.winner.id ? 'Same result as real life' : `Real life: ${n.actualWinner.name} won ${n.actual.wins.slice().sort((x, y) => y - x).join('–')}`) : 'Alternate history matchup'));
+      if (n.actualTeams) card.appendChild(h('div', { class: 'small tag' }, ps.isActualMatchup(n) ? (n.actualWinner ? (n.actualWinner.id === n.winner.id ? 'Same result as real life' : `Real life: ${n.actualWinner.name} won ${n.actual.wins.slice().sort((x, y) => y - x).join('–')}`) : 'Real series still in progress') : 'Alternate matchup (not in real life)'));
       card.appendChild(h('div', { class: 'btnrow' }, h('button', { class: 'btn sm', onclick: () => { ps.reset(n); ps.invalidateDownstream(n); this.render(); } }, 'Replay')));
     } else {
       card.append(teamRow(a, null, false), teamRow(b, null, false));
-      if (n.actual && (!ready || ps.isActualMatchup(n))) card.appendChild(h('div', { class: 'small tag' }, `Real: ${n.actualWinner.name} won ${n.actual.wins.slice().sort((x, y) => y - x).join('–')}`));
-      else if (n.actual && ready) card.appendChild(h('div', { class: 'small tag alt' }, 'New matchup (not in real life)'));
+      if (n.actual && n.actual.inProgress && ps.isActualMatchup(n)) card.appendChild(h('div', { class: 'small tag' }, `Real series in progress: ${n.actualTeams[0]} ${n.actual.wins[0]}, ${n.actualTeams[1]} ${n.actual.wins[1]}`));
+      else if (n.actual && n.actualWinner && (!ready || ps.isActualMatchup(n))) card.appendChild(h('div', { class: 'small tag' }, `Real: ${n.actualWinner.name} won ${n.actual.wins.slice().sort((x, y) => y - x).join('–')}`));
+      else if (n.actual && ready && !ps.isActualMatchup(n)) card.appendChild(h('div', { class: 'small tag alt' }, 'New matchup (not in real life)'));
       if (ready) card.appendChild(h('div', { class: 'btnrow' },
         h('button', { class: 'btn sm primary', onclick: () => this.watch(n) }, 'Play game by game'),
         h('button', { class: 'btn sm', onclick: () => { this.simSeries(n); this.render(); } }, 'Sim series')));

@@ -5,6 +5,10 @@ import { renderPostMode } from './ui/mode_post.js';
 import { renderSeasonMode } from './ui/mode_season.js';
 import { renderCustomMode } from './ui/mode_custom.js';
 import { renderLiveMode } from './ui/mode_live.js';
+import { renderStatsMode } from './ui/mode_stats.js';
+import { mountNavAccount } from './ui/account.js';
+import { cloud } from './cloud.js';
+import { requestPersistence } from './store.js';
 
 const ctx = { state: {}, index: null, G: null };
 const app = document.getElementById('app');
@@ -21,6 +25,7 @@ function home() {
       c('#/post', '2 · Replay a postseason', 'Re-run any October or any single series with the real lineups and rotations. If the other team wins, the bracket carries your result forward and you keep playing.'),
       c('#/season', '3 · Season mode', 'Replay any season on its real schedule: standings, leaders, live games, then the playoffs.'),
       c('#/live', '5 · Live 2026 season', 'Follow the real 2026 season as it unfolds — real rosters, real probable pitchers, real standings — and play or sim any game before (or after) it happens.'),
+      c('#/stats', 'Stats & game logs', 'Every game you play or sim is saved — full box score and play-by-play — with player stats, leaders and game logs. Sign in with Google or Apple to sync.'),
       c('#/custom', '4 · Custom league & tournament', 'Draft your own league from any team-seasons in history — divisions, schedule, playoff format — or a straight elimination tournament.')),
     h('details', { class: 'card how' }, h('summary', null, 'How the simulation works'),
       h('ul', null,
@@ -36,7 +41,7 @@ function route() {
   const r = (location.hash || '#/').replace(/^#\//, '').split('/')[0];
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === r));
   window.scrollTo(0, 0);
-  const fn = { '': home, game: () => renderGameMode(app, ctx), post: () => renderPostMode(app, ctx), season: () => renderSeasonMode(app, ctx), custom: () => renderCustomMode(app, ctx), live: () => renderLiveMode(app, ctx) }[r] || home;
+  const fn = { '': home, game: () => renderGameMode(app, ctx), post: () => renderPostMode(app, ctx), season: () => renderSeasonMode(app, ctx), custom: () => renderCustomMode(app, ctx), live: () => renderLiveMode(app, ctx), stats: () => renderStatsMode(app, ctx) }[r] || home;
   Promise.resolve(fn()).catch(err => { console.error(err); clear(app); app.appendChild(h('div', { class: 'card warn' }, 'Something went wrong: ' + err.message)); });
 }
 
@@ -50,6 +55,9 @@ function route() {
     app.appendChild(h('div', { class: 'card warn' }, h('h3', null, 'Could not load data'), h('p', null, e.message), h('p', null, 'Serve this folder over HTTP (for example ', h('code', null, 'python3 -m http.server 8000'), ' and open http://localhost:8000). Opening index.html directly from disk blocks data loading.')));
     return;
   }
+  mountNavAccount(document.getElementById('acct'));
+  cloud.init();
+  requestPersistence();
   window.addEventListener('hashchange', route);
   route();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) navigator.serviceWorker.register('sw.js').catch(() => {});
