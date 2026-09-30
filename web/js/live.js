@@ -2,6 +2,7 @@
 // blends it with prior-season tendencies from the bundled Retrosheet data, and builds sim-ready teams.
 import { loadJSONGz, loadSeason, makePlayer, getGlobal, eraIndex } from './data.js';
 import { finishRoles } from './teams.js';
+import { applyUserDefault } from './lineups.js';
 
 export const API = 'https://statsapi.mlb.com/api/v1';
 export const MLB_TEAM = { 108: 'ANA', 109: 'ARI', 110: 'BAL', 111: 'BOS', 112: 'CHN', 113: 'CIN', 114: 'CLE', 115: 'COL', 116: 'DET', 117: 'HOU', 118: 'KCA', 119: 'LAN', 120: 'WAS', 121: 'NYN', 133: 'ATH', 134: 'PIT', 135: 'SDN', 136: 'SEA', 137: 'SFN', 138: 'SLN', 139: 'TBA', 140: 'TEX', 141: 'TOR', 142: 'MIN', 143: 'PHI', 144: 'ATL', 145: 'CHA', 146: 'MIA', 147: 'NYA', 158: 'MIL' };
@@ -291,7 +292,7 @@ export function buildLiveTeam(S, code, live, opts = {}) {
   };
   team.sp = team.rotation[0] || pen[0];
   finishRoles(team);
-  return team;
+  return applyUserDefault(team);
 }
 
 /** Sim teams for one real game: probable pitchers and (if posted) real lineups. */

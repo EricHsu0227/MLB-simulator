@@ -4,6 +4,7 @@ import { loadSeason } from '../data.js';
 import { buildTeam } from '../teams.js';
 import { League, structuredSchedule, dailyTeam, newRuntime, bracketNodes, Postseason } from '../league.js';
 import { SeasonView } from './mode_season.js';
+import { Recorder, newId } from '../saves.js';
 import { PostseasonView } from './postview.js';
 import { archiveGame, registerUniverse } from '../archive.js';
 
@@ -165,53 +166,78 @@ export async function renderCustomMode(root, ctx) {
   // ---------------------------------------------------------- start
   async function start() {
     clear(status); status.appendChild(spinner('Loading seasons…'));
-    const years = [...new Set(st.teams.map(t => t.year))];
-    const seasons = new Map();
-    for (const y of years) { seasons.set(y, await loadSeason(y)); await nextFrame(); }
-    const entries = st.teams.map(t => {
-      const S = seasons.get(t.year);
-      const meta = S.teams[t.code];
-      const team = buildTeam(S, t.code);
-      return { id: `${t.year}${t.code}`, code: t.code, year: t.year, name: `${t.year} ${meta.n}`, team, lg: t.lg, div: t.div, real: [meta.w, meta.l], S };
-    });
-    clear(status);
-    if (st.format === 'league') {
-      const schedule = structuredSchedule(entries, st.sched);
-      const uni = `custom-${Date.now().toString(36)}`;
-      registerUniverse(uni, `Custom league: ${st.name}`);
-      const lg = new League(entries, schedule, { method: st.method, dhRule: st.dhRule, ghost: false,
-        onGame: (g, r) => archiveGame(r.sim, { universe: uni, key: `${g.away}@${g.home}#${g.day}`, kind: 'R', label: st.name }) });
-      lg.S = null; lg.universe = uni;
-      const cfg = { ...st.playoff, needs: st.playoff.needs.slice(), finalLabel: `${st.name} Final` };
-      const view = new SeasonView(lg, { title: st.name, kind: 'custom', playoffCfg: cfg });
-      clear(root);
-      root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => renderCustomMode(root, ctx) }, '‹ Edit league'), view.root));
-    } else {
-      let seeds = entries.slice();
-      if (st.tourn.seeding === 'record') seeds.sort((a, b) => b.real[0] / (b.real[0] + b.real[1]) - a.real[0] / (a.real[0] + a.real[1]));
-      else if (st.tourn.seeding === 'random') seeds.sort(() => Math.random() - 0.5);
-      const rounds = Math.max(1, Math.ceil(Math.log2(Math.max(2, seeds.length))));
-      const seedEntries = seeds.map(e => ({ id: e.id, code: e.id, name: e.name, year: e.year, entry: e, rec: e.real }));
-      const b = bracketNodes(seedEntries, st.tourn.needs.slice(-rounds));
-      const ps = new Postseason(b.nodes, { higherSeed: () => 0 });
-      // seed order decides who is "higher": nodes list team A (better seed) first
-      const rts = new Map(entries.map(e => [e.id, newRuntime(e)]));
-      const tl = new League(entries, [], { method: st.method, dhRule: st.dhRule });
-      const prepare = (node, entry, gameNo, opp, isHome) => {
-        const e = entry.entry;
-        const t = dailyTeam(e, tl.rt.get(e.id), 100 + node.id * 12 + gameNo, tl.rng, { restP: 0, restDays: 3 });
-        t.dh = tl.dhFor(isHome ? e : opp.entry);
-        return t;
-      };
-      const uni = `tourn-${Date.now().toString(36)}`;
-      registerUniverse(uni, `Tournament: ${st.name}`);
-      const pv = new PostseasonView(ps, { title: `${st.name} — tournament`, prepare, simOpts: { method: st.method }, showYear: false,
-        archiveMeta: (node, pg) => ({ universe: uni, key: `${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${st.name} R${node.round + 1} G${pg.gameNo + 1}` }) });
-      clear(root);
-      root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => renderCustomMode(root, ctx) }, '‹ Edit tournament'), pv.root));
+    const spec = JSON.parse(JSON.stringify({ st: { name: st.name, teams: st.teams, format: st.format, sched: st.sched, playoff: st.playoff, tourn: st.tourn, dhRule: st.dhRule, method: st.method } }));
+    spec.seed = (Math.random() * 2 ** 32) >>> 0;
+    spec.uni = `${st.format === 'league' ? 'custom' : 'tourn'}-${Date.now().toString(36)}`;
+    if (st.format !== 'league') {
+      // tournament seeding is decided once, here, so a saved run rebuilds the same bracket
+      const seasons = new Map();
+      for (const y of new Set(st.teams.map(t => t.year))) seasons.set(y, await loadSeason(y));
+      let list = st.teams.map(t => ({ id: `${t.year}${t.code}`, real: [seasons.get(t.year).teams[t.code].w, seasons.get(t.year).teams[t.code].l] }));
+      if (st.tourn.seeding === 'record') list.sort((a, b) => b.real[0] / (b.real[0] + b.real[1]) - a.real[0] / (a.real[0] + a.real[1]));
+      else if (st.tourn.seeding === 'random') list.sort(() => Math.random() - 0.5);
+      spec.order = list.map(x => x.id);
     }
+    const run = { id: newId(st.format === 'league' ? 'custom' : 'tourn'), kind: st.format === 'league' ? 'custom' : 'tourn', title: st.name + (st.format === 'league' ? '' : ' — tournament'), sub: st.format === 'league' ? 'Custom league' : 'Tournament', spec, cmds: [] };
+    const view = await buildCustomRun(run);
+    clear(status); clear(root);
+    root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => renderCustomMode(root, ctx) }, st.format === 'league' ? '‹ Edit league' : '‹ Edit tournament'), view.root));
   }
 
   box.append(adder, teamsBox, settings, status);
   refresh();
+}
+
+/** Build (or rebuild and replay) a custom league / tournament run. Returns the view. */
+export async function buildCustomRun(run) {
+  const sp = run.spec, st = sp.st;
+  const years = [...new Set(st.teams.map(t => t.year))];
+  const seasons = new Map();
+  for (const y of years) { seasons.set(y, await loadSeason(y)); await nextFrame(); }
+  const entries = st.teams.map(t => {
+    const S = seasons.get(t.year);
+    const meta = S.teams[t.code];
+    const team = buildTeam(S, t.code);
+    return { id: `${t.year}${t.code}`, code: t.code, year: t.year, name: `${t.year} ${meta.n}`, team, lg: t.lg, div: t.div, real: [meta.w, meta.l], S };
+  });
+  const rec = new Recorder(run);
+  if (run.kind === 'custom') {
+    const schedule = structuredSchedule(entries, st.sched);
+    const uni = sp.uni;
+    registerUniverse(uni, `Custom league: ${st.name}`);
+    const lg = new League(entries, schedule, { method: st.method, dhRule: st.dhRule, ghost: false, seed: sp.seed,
+      onGame: (g, r) => { if (!lg.replaying) archiveGame(r.sim, { universe: uni, key: `${g.away}@${g.home}#${g.day}`, kind: 'R', label: st.name }); } });
+    lg.S = null; lg.universe = uni;
+    const cfg = { ...st.playoff, needs: st.playoff.needs.slice(), finalLabel: `${st.name} Final` };
+    const view = new SeasonView(lg, { title: st.name, kind: 'custom', playoffCfg: cfg, rec });
+    if (run.cmds.length) view.restore(run.cmds.slice());
+    return view;
+  }
+  const byId = new Map(entries.map(e => [e.id, e]));
+  const seeds = sp.order.map(id => byId.get(id));
+  const rounds = Math.max(1, Math.ceil(Math.log2(Math.max(2, seeds.length))));
+  const seedEntries = seeds.map(e => ({ id: e.id, code: e.id, name: e.name, year: e.year, entry: e, rec: e.real }));
+  const b = bracketNodes(seedEntries, st.tourn.needs.slice(-rounds));
+  const ps = new Postseason(b.nodes, { higherSeed: () => 0 });
+  const tl = new League(entries, [], { method: st.method, dhRule: st.dhRule, seed: sp.seed });
+  const prepare = (node, entry, gameNo, opp, isHome) => {
+    const e = entry.entry;
+    const t = dailyTeam(e, tl.rt.get(e.id), 100 + node.id * 12 + gameNo, tl.rng, { restP: 0, restDays: 3 });
+    t.dh = tl.dhFor(isHome ? e : opp.entry);
+    return t;
+  };
+  registerUniverse(sp.uni, `Tournament: ${st.name}`);
+  const pv = new PostseasonView(ps, { title: `${st.name} — tournament`, prepare, simOpts: { method: st.method }, showYear: false, seed: sp.seed ^ 0x5bd1e995,
+    onCmd: c => rec.add(c),
+    archiveMeta: (node, pg) => ({ universe: sp.uni, key: `${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${st.name} R${node.round + 1} G${pg.gameNo + 1}` }) });
+  if (run.cmds.length) pv.replay(run.cmds.slice());
+  return pv;
+}
+
+export async function resumeCustom(root, ctx, run) {
+  clear(root); root.appendChild(spinner('Restoring…'));
+  await nextFrame();
+  const view = await buildCustomRun(run);
+  clear(root);
+  root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => { location.hash = '#/saves'; } }, '‹ Saved games'), view.root));
 }

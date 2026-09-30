@@ -85,3 +85,83 @@ export const fmt = {
   d2: x => x.toFixed(2),
   d1: x => x.toFixed(1),
 };
+
+// ---------------------------------------------------------------- left/right splits
+function lineFrom(c, batter) {
+  const pa = c[0];
+  if (!pa) return null;
+  const k = c[1], bb = c[2], hbp = c[3], s1 = c[4], d = c[5], t = c[6], hr = c[7];
+  const h = s1 + d + t + hr, ab = pa - bb - hbp, tb = s1 + 2 * d + 3 * t + 4 * hr;
+  const woba = (WOBA_W[1] * bb + WOBA_W[2] * hbp + WOBA_W[3] * s1 + WOBA_W[4] * d + WOBA_W[5] * t + WOBA_W[6] * hr) / pa;
+  return { pa, ab, h, hr, bb, k, avg: pct(h, ab), obp: pct(h + bb + hbp, pa), slg: pct(tb, ab), ops: pct(h + bb + hbp, pa) + pct(tb, ab), woba, kpct: pct(k, pa), bbpct: pct(bb, pa), hrpct: pct(hr, pa), babip: pct(h - hr, ab - k - hr) };
+}
+/** {L: line, R: line} vs LHP / RHP for a hitter, or vs LHB / RHB for a pitcher. Null if no split data. */
+export function splitStats(S, idx, role) {
+  const m = role === 'pit' ? S.pspMap : S.bspMap;
+  const sp = m && m.get(idx);
+  if (!sp) return null;
+  return { L: lineFrom(sp.L), R: lineFrom(sp.R) };
+}
+
+/** {L, R} lines from a concatenated [L(9), R(9)] count array (career shards). */
+export function splitFromArr(a) {
+  if (!a) return null;
+  return { L: lineFrom(a.slice(0, 9)), R: lineFrom(a.slice(9, 18)) };
+}
+/** A one-player season object so batStats/pitStats/ratings work on career-shard rows. ctx = [lgwoba, lgR, lgEra, cFip] from index.json. */
+export function pseudoSeason(ctx, bat, pit) {
+  const S = { batRows: new Map(), pitRows: new Map(), base: {}, teams: {} };
+  if (bat) S.batRows.set(0, { n: bat });
+  if (pit) S.pitRows.set(0, { n: pit });
+  ctxCache.set(S, { lgwoba: ctx[0], lgR: ctx[1], lgEra: ctx[2], cFip: ctx[3], usesER: true });
+  return S;
+}
+/** Rating from career-row stats alone (no league counts needed): centred on the season's league wOBA. */
+export function quickOvr(ctx, b, p) {
+  const out = {};
+  if (b && b.pa >= 30) { const rel = b.pa / (b.pa + 150); out.bat = Math.round(clamp(50 + (b.wrcPlus - 100) * 0.4 * rel, 20, 99)); }
+  if (p && p.bf >= 30) { const rel = p.bf / (p.bf + 200); out.pit = Math.round(clamp(50 + (ctx[0] - p.woba) * 330 * rel, 20, 99)); }
+  return out;
+}
+
+// ---------------------------------------------------------------- player ratings (20-80 scouting scale + 1-99 overall)
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+const scale = z => Math.round(clamp(50 + 10 * z, 20, 80) / 5) * 5;
+export function tier(ovr) { return ovr >= 90 ? 'Superstar' : ovr >= 80 ? 'All-Star' : ovr >= 70 ? 'Star' : ovr >= 60 ? 'Above average' : ovr >= 50 ? 'Solid' : ovr >= 40 ? 'Role player' : 'Replacement level'; }
+
+export function hitterRatings(S, idx) {
+  const b = batStats(S, idx);
+  if (!b || b.pa < 30) return null;
+  const ctx = leagueContext(S);
+  let pa = 0, k = 0, bb = 0, hr = 0, h = 0, tb = 0, ab = 0;
+  const seen = new Set();
+  for (const B of Object.values(S.base || {})) { if (seen.has(B)) continue; seen.add(B); const c = B.bat; pa += c[0]; k += c[1]; bb += c[2]; ab += c[0] - c[2] - c[3]; hr += c[7]; h += c[4] + c[5] + c[6] + c[7]; tb += c[4] + 2 * c[5] + 3 * c[6] + 4 * c[7]; }
+  const lgK = pct(k, pa), lgBB = pct(bb, pa), lgHR = pct(hr, pa), lgISO = pct(tb - h, ab), lgBABIP = pct(h - hr, ab - k - hr);
+  const rel = b.pa / (b.pa + 150);              // reliability shrink so 60-PA cameos don't look elite
+  const z = v => v * rel;
+  const contact = scale(z(0.65 * (lgK - b.kpct) / 0.05 + 0.35 * (b.babip - lgBABIP) / 0.03));
+  const power = scale(z(0.6 * (b.iso - lgISO) / 0.05 + 0.4 * (b.hrpct - lgHR) / 0.02));
+  const eye = scale(z((b.bbpct - lgBB) / 0.035));
+  const spd = (b.sb - b.cs * 1.5) / Math.max(1, b.pa) * 600 / 12 + (b.t / Math.max(1, b.pa) * 600 - 2.5) / 3;
+  const speed = scale(z(spd));
+  const ovr = Math.round(clamp(50 + (b.wrcPlus - 100) * 0.4 * rel + (rel < 1 ? 0 : 0), 20, 99));
+  return { ovr, tier: tier(ovr), contact, power, eye, speed, wrcPlus: b.wrcPlus };
+}
+
+export function pitcherRatings(S, idx) {
+  const p = pitStats(S, idx);
+  if (!p || p.bf < 30) return null;
+  const ctx = leagueContext(S);
+  let bf = 0, k = 0, bb = 0, hr = 0;
+  const seen = new Set();
+  for (const B of Object.values(S.base || {})) { if (seen.has(B)) continue; seen.add(B); const c = B.pit; bf += c[0]; k += c[1]; bb += c[2]; hr += c[7]; }
+  const lgK = pct(k, bf), lgBB = pct(bb, bf), lgHR = pct(hr, bf);
+  const rel = p.bf / (p.bf + 200);
+  const stuff = scale(rel * (p.kpct - lgK) / 0.05);
+  const control = scale(rel * (lgBB - p.bbpct) / 0.02);
+  const contact = scale(rel * (0.6 * (lgHR - pct(p.hr, p.bf)) / 0.008 + 0.4 * (p.gb - 0.43) / 0.07));
+  const perApp = p.gs >= p.g * 0.5 ? p.bf / Math.max(1, p.gs) : p.bf / Math.max(1, p.g);
+  const stamina = p.gs >= p.g * 0.5 ? scale((perApp - 24) / 5) : scale((perApp - 4.2) / 1.2);
+  const ovr = Math.round(clamp(50 + (ctx.lgwoba - p.woba) * 330 * rel, 20, 99));
+  return { ovr, tier: tier(ovr), stuff, control, contact, stamina, role: p.gs >= p.g * 0.5 && p.gs >= 3 ? 'Starter' : 'Reliever' };
+}

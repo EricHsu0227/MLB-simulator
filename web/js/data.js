@@ -29,14 +29,27 @@ export async function loadJSONGz(path) {
   return JSON.parse(text);
 }
 
+const CAREERS = new Map();
+/** Career shard for a Retrosheet id (all seasons of every player whose id starts with the same letter). */
+export async function loadCareer(id) {
+  const k = String(id)[0];
+  if (!CAREERS.has(k)) CAREERS.set(k, loadJSONGz(BASE + 'career/' + k + '.json.gz').catch(() => ({})));
+  return (await CAREERS.get(k))[id] || null;
+}
+
+let INDEX = null;
+export const getIndex = () => INDEX;
 export async function loadIndex() {
   const bytes = await readBytes(BASE + 'index.json');
-  return JSON.parse(new TextDecoder().decode(bytes));
+  INDEX = JSON.parse(new TextDecoder().decode(bytes));
+  return INDEX;
 }
 
 // ---------------------------------------------------------------- constants
 export const EV = ['K', 'BB', 'HBP', '1B', '2B', '3B', 'HR', 'OUT'];
 export const WOBA_W = [0, 0.69, 0.72, 0.88, 1.24, 1.56, 2.08, 0];
+/** wOBA of an 8-vector of event rates (K,BB,HBP,1B,2B,3B,HR,OUT). */
+export const wobaOf = r => { let w = 0; for (let i = 0; i < 8; i++) w += WOBA_W[i] * r[i]; return w; };
 export const POS_NAME = { 1: 'P', 2: 'C', 3: '1B', 4: '2B', 5: '3B', 6: 'SS', 7: 'LF', 8: 'CF', 9: 'RF', 10: 'DH', 11: 'PH', 12: 'PR' };
 
 const ERAS_RANGE = [[1901, 1919], [1920, 1945], [1946, 1968], [1969, 1992], [1993, 2019], [2020, 2100]];
@@ -171,6 +184,8 @@ function prepareSeason(raw) {
   S.batRows = mk(raw.bat, 19);
   S.batpRows = mk(raw.batp, 19);
   S.pitRows = mk(raw.pit, 22);
+  S.bspMap = new Map(); for (const r of raw.bsp || []) S.bspMap.set(r[0], { L: r.slice(1, 10), R: r.slice(10, 19) });
+  S.pspMap = new Map(); for (const r of raw.psp || []) S.pspMap.set(r[0], { L: r.slice(1, 10), R: r.slice(10, 19) });
   // league baselines as rates
   S.base = {};
   for (const lg in raw.lg) {
@@ -267,6 +282,7 @@ export function makePlayer(S, idx, lg, cfg = {}) {
     return { pa, r, t, d, attMult: Math.min(6, Math.max(0.15, attRate / (lgAtt || 0.05))), succRel: succ / (lgSucc || 0.7), n };
   };
   p.bat = mkBat(S.batRows.get(idx), base.bat);
+  p.bat.vs = splitRates(S.bspMap && S.bspMap.get(idx), S.batRows.get(idx)?.pf, p.bat.r, (thr) => (info.bats === 'B' ? (thr === 'L' ? 'R' : 'L') : (info.bats === 'L' ? 'L' : 'R')), T, 'bat');
   const rowP = S.batpRows.get(idx);
   p.batP = mkBat(rowP && rowP.n[0] >= 8 ? rowP : null, base.batP);
   // pitching
@@ -295,6 +311,7 @@ export function makePlayer(S, idx, lg, cfg = {}) {
     endur: isStarter ? (endStart || 24) : Math.min(endRel, 16),
     er: pn ? pn[20] : 0,
   };
+  p.pit.vs = splitRates(S.pspMap && S.pspMap.get(idx), prow ? prow.pf : null, pr, null, T, 'pit', info.throws === 'L' ? 'L' : 'R');
   // quality index for bullpen ordering: smaller = better (wOBA-against of neutral rates)
   let w = 0; for (let i = 0; i < 8; i++) w += WOBA_W[i] * pr[i];
   p.pit.wobaAgainst = w;
@@ -302,6 +319,34 @@ export function makePlayer(S, idx, lg, cfg = {}) {
   p.bat.woba = wb;
   S._pcache.set(ck, p);
   return p;
+}
+
+/**
+ * Left/right split rates. Each split (vs LHP/RHP for a hitter, vs LHB/RHB for a pitcher) is that player's own
+ * real split, regressed toward his overall rate adjusted by the league platoon effect, and park-neutralised.
+ */
+const SPLIT_K = 150;
+function splitRates(sp, pf, overall, sideOf, T, role, throws = 'R') {
+  if (!sp) return null;
+  const out = {};
+  for (const key of ['L', 'R']) {
+    const c = sp[key];
+    if (!c || c[0] < 1) continue;
+    // hitter: key = pitcher hand; pitcher: key = batter side
+    const plat = role === 'bat' ? T.plat[sideOf(key)][key] : T.plat[key][throws];
+    const wl = throws === 'L' ? 0.2 : 0.42;   // share of left-handed batters this pitcher usually faces
+    const mix = role === 'bat' ? null : (i => wl * T.plat.L[throws][i] + (1 - wl) * T.plat.R[throws][i]);
+    const prior = new Float64Array(8); let ps = 0;
+    for (let i = 0; i < 7; i++) { prior[i] = overall[i] * plat[i] / (mix ? mix(i) : 1); ps += prior[i]; }
+    prior[7] = Math.max(0.15, 1 - ps);
+    const r = new Float64Array(8);
+    for (let i = 0; i < 8; i++) r[i] = (c[1 + i] + SPLIT_K * prior[i]) / (c[0] + SPLIT_K);
+    if (pf) for (let j = 0; j < 4; j++) r[3 + j] /= (pf[j] || 1);
+    let s2 = 0; for (let i = 0; i < 7; i++) s2 += r[i];
+    r[7] = Math.max(0.15, 1 - s2);
+    out[key] = r;
+  }
+  return out.L || out.R ? out : null;
 }
 
 /** Real (unregressed) counting stat lines for display. */

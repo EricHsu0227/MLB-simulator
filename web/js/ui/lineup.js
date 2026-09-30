@@ -1,6 +1,9 @@
 // Pre-game screen: set the batting order, positions, bench swaps and the starting pitcher for both teams.
 import { h, clear, select, f3, POS } from './common.js';
 import { playerLink } from './playercard.js';
+import { wobaOf } from '../data.js';
+import { saveDefaultLineup, clearDefaultLineup, hasDefault } from '../lineups.js';
+import { toast } from './common.js';
 
 const KEY = 'dsim.reviewLineups';
 export const reviewOn = () => { try { return localStorage.getItem(KEY) !== '0'; } catch (e) { return true; } };
@@ -52,7 +55,7 @@ export function editLineups(root, o) {
       box.appendChild(h('h4', null, `${t.year ? t.year + ' ' : ''}${t.name} ${ti === 0 ? '(away)' : '(home)'}`));
       // starting pitcher
       box.appendChild(h('div', { class: 'srow' }, h('b', null, 'Starting pitcher'),
-        select(pens.map(p => [p.key, `${p.name} (${p.throws}) · ${f3(p.pit.wobaAgainst)} wOBA-a · ~${Math.round(p.pit.endur)} BF`]), t.sp?.key, v => {
+        select(pens.map(p => [p.key, `${p.name} (${p.throws}) · ${f3(p.pit.wobaAgainst)} wOBA-a${p.pit.vs ? ' (L ' + (p.pit.vs.L ? f3(wobaOf(p.pit.vs.L)) : '—') + ' / R ' + (p.pit.vs.R ? f3(wobaOf(p.pit.vs.R)) : '—') + ')' : ''} · ~${Math.round(p.pit.endur)} BF${p.roleWhy ? ' · ' + p.roleWhy : ''}`]), t.sp?.key, v => {
           const p = pens.find(x => x.key === v);
           t.sp = p; t.bullpen = origPen[ti].filter(x => x !== p);
           t.lineup = t.lineup.map(x => (x.pos === 1 ? { p, pos: 1 } : x));
@@ -62,7 +65,7 @@ export function editLineups(root, o) {
       // lineup rows
       const dup = new Map();
       for (const x of t.lineup) if (x.pos !== 1) dup.set(x.pos, (dup.get(x.pos) || 0) + 1);
-      const tbl = h('table', { class: 'tbl compact' }, h('thead', null, h('tr', null, ['#', '', 'Player', 'Pos', 'wOBA', 'Swap in'].map(x => h('th', null, x)))));
+      const tbl = h('table', { class: 'tbl compact' }, h('thead', null, h('tr', null, ['#', '', 'Player', 'Pos', 'wOBA', 'vs L / vs R', 'Swap in'].map(x => h('th', null, x)))));
       const tb = h('tbody');
       t.lineup.forEach((x, i) => {
         const isP = x.pos === 1;
@@ -74,7 +77,8 @@ export function editLineups(root, o) {
           h('td', { class: 'pn' }, playerLink({ p: x.p }), ' ', h('span', { class: 'muted small' }, x.p.bats)),
           h('td', null, isP ? 'P' : select(POSOPTS.filter(([v]) => dh || v !== 10), x.pos, v => { x.pos = +v; draw(); })),
           h('td', null, isP ? '—' : f3(x.p.bat.woba)),
-          h('td', null, isP ? '—' : select([['', 'Swap in…'], ...bench.map(b => [b.key, `${b.name} (${b.bats}) ${f3(b.bat.woba)}`])], '', v => {
+          h('td', { class: 'muted small' }, isP ? '' : vsText(x.p)),
+          h('td', null, isP ? '—' : select([['', 'Swap in…'], ...bench.map(b => [b.key, `${b.name} (${b.bats}) ${f3(b.bat.woba)} · ${vsText(b)}`])], '', v => {
             if (!v) return; const nb = bench.find(b => b.key === v);
             t.bench = t.bench.filter(b => b !== nb); t.bench.unshift(x.p); t.lineup[i] = { p: nb, pos: x.pos }; draw();
           }))));
@@ -84,13 +88,16 @@ export function editLineups(root, o) {
       if ([...dup.values()].some(n => n > 1)) box.appendChild(h('p', { class: 'small warn' }, 'Two players share a position — fine for the sim, but check it’s what you want.'));
       box.appendChild(h('div', { class: 'btnrow tight' },
         h('button', { class: 'btn sm', onclick: () => { const hit = t.lineup.filter(x => x.pos !== 1).sort((a, b) => b.p.bat.woba - a.p.bat.woba); const pit = t.lineup.filter(x => x.pos === 1); const order = [1, 0, 2, 3, 4, 5, 6, 7, 8]; const arranged = order.map(k => hit[k]).filter(Boolean); t.lineup = arranged.concat(pit); draw(); } }, 'Best hitters up top'),
-        h('button', { class: 'btn sm', onclick: () => { eds[ti] = clone(orig[ti]); draw(); } }, 'Reset')));
+        h('button', { class: 'btn sm', onclick: () => { eds[ti] = clone(orig[ti]); draw(); } }, 'Reset'),
+        h('button', { class: 'btn sm', title: 'Every future game of this team-season starts with this lineup', onclick: async () => { await saveDefaultLineup(t, dh); toast(`Saved as ${t.name}’s default ${dh ? 'DH ' : 'no-DH '}lineup`); draw(); } }, 'Save as team default'),
+        hasDefault(t, dh) ? h('button', { class: 'btn sm', onclick: async () => { await clearDefaultLineup(t, dh); toast('Default cleared'); draw(); } }, 'Clear default') : null));
       return box;
     }
     draw();
   });
 }
 
+const vsText = p => (p.bat.vs ? ['L', 'R'].map(k => (p.bat.vs[k] ? f3(wobaOf(p.bat.vs[k])) : '—')).join(' / ') : '—');
 function sig(t) { return t.sp?.key + '|' + t.lineup.map(x => x.p.key + ':' + x.pos).join(','); }
 
 /** After editing: real-substitution scripts no longer line up, so hand those teams to the auto-manager. */

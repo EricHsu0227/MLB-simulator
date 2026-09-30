@@ -241,6 +241,9 @@ class Acc:
         self.runvec = collections.defaultdict(collections.Counter)
         self.plat = collections.Counter()
         self.gpit = collections.defaultdict(lambda: {'gs': set(), 'g': set()})
+        self.bsplit = {}      # batter id -> {'L': [9], 'R': [9]}  (by pitcher throwing hand)
+        self.psplit = {}      # pitcher id -> {'L': [9], 'R': [9]}  (by batter's effective side)
+        self.pteam = collections.defaultdict(collections.Counter)
 
     def lgrec(self, lg):
         r = self.lg.get(lg)
@@ -350,6 +353,11 @@ def process_game_events(g, m, acc, hands, tlg, era):
         row = brow(acc.batp if isP else acc.bat, bid)
         row[0] += 1
         row[1 + ev] += 1
+        acc.pteam[bid][bat_t] += 1
+        if not isP:
+            sp_ = acc.bsplit.setdefault(bid, {'L': [0] * 9, 'R': [0] * 9})['L' if pthrows == 'L' else 'R']
+            sp_[0] += 1
+            sp_[1 + ev] += 1
         lgb = acc.lgrec(blg)
         lgp = acc.lgrec(plg)
         (lgb['batP'] if isP else lgb['bat'])[0] += 1
@@ -375,6 +383,10 @@ def process_game_events(g, m, acc, hands, tlg, era):
             if not isP:
                 pr[0] += 1
                 pr[1 + ev] += 1
+                ps_ = acc.psplit.setdefault(pit, {'L': [0] * 9, 'R': [0] * 9})[side]
+                ps_[0] += 1
+                ps_[1 + ev] += 1
+                acc.pteam[('p', pit)][pit_t] += 1
                 lgp['pit'][0] += 1
                 lgp['pit'][1 + ev] += 1
                 acc.ppark[pit][site] += 1
@@ -577,6 +589,7 @@ def process_season(args):
         'year': year, 'master': master, 'bat': acc.bat, 'batp': acc.batp, 'pit': acc.pit,
         'bpark': dict(acc.bpark), 'ppark': dict(acc.ppark), 'lg': acc.lg,
         'teamHR': {k: dict(v) for k, v in acc.teamHR.items()},
+        'bsplit': acc.bsplit, 'psplit': acc.psplit, 'pteam': {k: dict(v) for k, v in acc.pteam.items()},
         'tlg': tlg, 'hands': hands, 'stats': stats,
         'tables': {'joint': acc.joint, 'hrz': acc.hrz, 'tr': dict(acc.tr), 'runexp': acc.runexp,
                    'runev': acc.runev, 'runvec': dict(acc.runvec), 'plat': acc.plat},
@@ -783,6 +796,13 @@ def finalize(args):
     for pid, row in raw['pit'].items():
         if row[12] or row[0]:
             pit_rows.append([pidx(pid)] + row + pfmix(raw['ppark'].get(pid, {})))
+    bsp_rows, psp_rows = [], []
+    for pid, d in raw.get('bsplit', {}).items():
+        if pid in pids:
+            bsp_rows.append([pids[pid]] + d['L'] + d['R'])
+    for pid, d in raw.get('psplit', {}).items():
+        if pid in pids:
+            psp_rows.append([pids[pid]] + d['L'] + d['R'])
     # ---- games
     glist = []
     for m in master:
@@ -828,17 +848,60 @@ def finalize(args):
             nm = names[pid]
         players.append([pid, nm, h[1] if h else 'R', h[2] if h else 'R'])
     parks = {s: [round(x, 3) for x in f] for s, f in pf_year.items()}
-    season = {'y': year, 'players': players, 'bat': bat_rows, 'batp': batp_rows, 'pit': pit_rows,
+    season = {'y': year, 'players': players, 'bat': bat_rows, 'batp': batp_rows, 'pit': pit_rows, 'bsp': bsp_rows, 'psp': psp_rows,
               'lg': raw['lg'], 'teams': teams_out, 'parks': parks, 'games': glist, 'series': series, 'dh': dh}
     path = os.path.join(out_dir, 'seasons', '%d.json.gz' % year)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with gzip.open(path, 'wt', encoding='utf-8', compresslevel=9) as f:
         json.dump(season, f, separators=(',', ':'))
-    summary = {'teams': {t: {'n': v['n'], 'lg': v['lg'], 'd': v['d'], 'w': v['w'], 'l': v['l']} for t, v in teams_out.items()},
+    # ---- league context (for wRC+ / FIP on career pages)
+    W = [0, 0.69, 0.72, 0.88, 1.24, 1.56, 2.08, 0]
+    lpa = 0; lc = [0] * 8
+    for L in raw['lg'].values():
+        for kk in ('bat', 'batP'):
+            lpa += L[kk][0]
+            for i_ in range(8):
+                lc[i_] += L[kk][1 + i_]
+    lgwoba = sum(W[i_] * lc[i_] for i_ in range(8)) / lpa if lpa else 0.32
+    runs = sum(v['rs'] for v in tstats.values())
+    lgR = runs / lpa if lpa and runs else 0.115
+    pip = per = pk = pbb = phbp = phr = pr_ = 0
+    for row in raw['pit'].values():
+        pip += row[14]; per += row[20]; pr_ += row[21]; pk += row[1]; pbb += row[2]; phbp += row[3]; phr += row[7]
+    ipn = pip / 3
+    lgEra = ((per if per > ipn * 0.3 else pr_) * 9 / ipn) if ipn else 4.3
+    cfip = lgEra - ((13 * phr + 3 * (pbb + phbp) - 2 * pk) / ipn if ipn else 0)
+    ctx = [round(lgwoba, 4), round(min(0.16, max(0.08, lgR)), 4), round(lgEra, 3), round(cfip, 3)]
+    # ---- career rows
+    career = []
+    hb = {}
+    for pid in pids:
+        h_ = hands.get(pid)
+        hb[pid] = (h_[0] if h_ else names.get(pid, pid), h_[1] if h_ else 'R', h_[2] if h_ else 'R')
+    def team_of(key):
+        c = raw.get('pteam', {}).get(key)
+        return max(c, key=c.get) if c else ''
+    for pid in pids:
+        b = raw['bat'].get(pid); bp = raw['batp'].get(pid); p_ = raw['pit'].get(pid)
+        if not (b or bp or p_):
+            continue
+        brow_ = None
+        if b or bp:
+            brow_ = [(b[i_] if b else 0) + (bp[i_] if bp else 0) for i_ in range(NB)]
+            if brow_[0] <= 0 and brow_[16] <= 0:
+                brow_ = None
+        prow_ = p_ if (p_ and (p_[12] or p_[0])) else None
+        if not (brow_ or prow_):
+            continue
+        bs = raw.get('bsplit', {}).get(pid)
+        ps = raw.get('psplit', {}).get(pid)
+        career.append([pid, hb[pid][0], hb[pid][1], hb[pid][2], year, team_of(pid) or team_of(('p', pid)), brow_, prow_,
+                       (bs['L'] + bs['R']) if bs else None, (ps['L'] + ps['R']) if ps else None])
+    summary = {'ctx': ctx, 'teams': {t: {'n': v['n'], 'lg': v['lg'], 'd': v['d'], 'w': v['w'], 'l': v['l']} for t, v in teams_out.items()},
                'series': [{k: s[k] for k in ('round', 'teams', 'wins', 'winner', 'from', 'need', 'start')} for s in series],
                'ng': sum(1 for g in glist if g['type'] == 'R'), 'dh': dh,
                'src': dict(collections.Counter(g['src'] for g in glist))}
-    return year, summary, os.path.getsize(path)
+    return year, summary, os.path.getsize(path), career
 
 
 def compute_park_factors(work, years):
@@ -907,6 +970,19 @@ def merge_tables(work, years):
         for k, c in t['runvec'].items():
             runvec[k].update(c)
     return joint, hrz, tr, runexp, runev, runvec, plat, lgsum
+
+
+def write_careers(careers, out_dir):
+    d = os.path.join(out_dir, 'career')
+    os.makedirs(d, exist_ok=True)
+    shards = collections.defaultdict(dict)
+    for pid, c in careers.items():
+        c['y'].sort(key=lambda r: r[0])
+        shards[pid[0]][pid] = c
+    for k, v in shards.items():
+        with gzip.open(os.path.join(d, k + '.json.gz'), 'wt', encoding='utf-8', compresslevel=9) as f:
+            json.dump(v, f, separators=(',', ':'))
+    print('career shards', len(shards), 'players', len(careers), flush=True)
 
 
 def build_global(work, years, out_dir, rs):
@@ -988,12 +1064,19 @@ def main():
     pf = compute_park_factors(work, years)
     idx = {}
     with Pool(a.jobs) as p:
-        for y, summ, size in p.imap_unordered(finalize, [(y, pf, out_dir, work) for y in years]):
+        careers = {}
+        for y, summ, size, crow in p.imap_unordered(finalize, [(y, pf, out_dir, work) for y in years]):
             idx[y] = summ
+            for r in crow:
+                pid = r[0]
+                c = careers.setdefault(pid, {'n': r[1], 'b': r[2], 't': r[3], 'y': []})
+                c['n'] = r[1]
+                c['y'].append([r[4], r[5], r[6], r[7], r[8], r[9]])
             print('wrote', y, size // 1024, 'KB', flush=True)
+    write_careers(careers, out_dir)
     build_global(work, years, out_dir, a.retrosheet)
     with open(os.path.join(out_dir, 'index.json'), 'w') as f:
-        json.dump({'years': sorted(idx), 'seasons': {str(y): idx[y] for y in sorted(idx)}}, f, separators=(',', ':'))
+        json.dump({'years': sorted(idx), 'ctx': {str(y): idx[y].pop('ctx') for y in sorted(idx)}, 'seasons': {str(y): idx[y] for y in sorted(idx)}}, f, separators=(',', ':'))
 
 
 if __name__ == '__main__':

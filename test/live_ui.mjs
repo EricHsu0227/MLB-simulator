@@ -28,7 +28,7 @@ await page.fill('input[type=date]', '2026-06-20'); await page.dispatchEvent('inp
 await page.waitForSelector('.gamecard');
 await shot('live-preview' + sfx);
 await page.click('.gamecard >> nth=0 >> text=Play it');
-await page.waitForSelector('h2:has-text("set your lineups")'); await shot('live-lineup' + sfx); await page.click('text=Play ball'); await page.waitForSelector('.gv'); await page.click('text=Next batter'); await page.waitForTimeout(2600);
+await page.waitForSelector('h2:has-text("set your lineups")', { timeout: 8000 }).catch(e => { console.log('ERRS', errors); throw e; }); await shot('live-lineup' + sfx); await page.click('text=Play ball'); await page.waitForSelector('.gv'); await page.click('text=Next batter'); await page.waitForTimeout(2600);
 await shot('live-play' + sfx);
 await page.click('text=Sim to end'); await page.waitForSelector('.final');
 await page.click('text=Back to games'); await page.waitForSelector('.gamecard');

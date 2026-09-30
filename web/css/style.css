@@ -176,3 +176,34 @@ body.noscroll { overflow: hidden; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .5rem; margin: .4rem 0; }
 .tile { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: .45rem .6rem; } .tv { font-weight: 800; font-size: 1.05rem; font-variant-numeric: tabular-nums; } .tl { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); } .ts { font-size: .72rem; }
 tr.dupe td { background: color-mix(in srgb, var(--bad) 14%, transparent); } td.mv { white-space: nowrap; } td.mv .btn { padding: 0 .4rem; min-height: 28px; }
+
+/* ---- animation upgrade: pitch chart, fielders, throws, sparks */
+.zone-bg { fill: rgba(0,0,0,.28); stroke: rgba(255,255,255,.25); stroke-width: .6; } .zone-box { fill: rgba(255,255,255,.06); stroke: #f3f0e6; stroke-width: 1; } .zone-grid { stroke: rgba(255,255,255,.28); stroke-width: .4; }
+.count { fill: #fff; font-size: 9px; font-weight: 800; } .pdot { stroke: #000; stroke-width: .4; opacity: .9; } .pdot.last { stroke: #fff; stroke-width: .8; }
+.plabel { fill: #fff; font-size: 8px; font-weight: 700; paint-order: stroke; stroke: #000; stroke-width: 2px; }
+.shadow { fill: rgba(0,0,0,.35); } .batline { stroke: #e9d8a6; stroke-width: 2; stroke-linecap: round; } .throw { stroke: #fff; stroke-width: 1; stroke-dasharray: 2 2; opacity: .8; } .trail { fill: rgba(255,255,255,.55); } .spark { fill: #ffd76a; }
+.fielder { transition: transform .25s; }
+.inn { fill: #fff; font-size: 11px; font-weight: 800; paint-order: stroke; stroke: #000; stroke-width: 2px; }
+.linescore td.cur { background: rgba(169,66,31,.18); font-weight: 800; }
+@keyframes runpop { 0% { transform: scale(1); } 40% { transform: scale(1.35); background: #b6f2c9; } 100% { transform: scale(1); } }
+.linescore td.pop { animation: runpop .9s ease-out; }
+@media (prefers-reduced-motion: reduce) { .linescore td.pop { animation: none; } }
+
+/* ---- managers panel, math tab, saves */
+.possel { padding: .15rem .25rem; font-size: .85rem; }
+.rulebar { display: flex; flex-direction: column; gap: .3rem; }
+.mathrow { border: 1px solid var(--line); border-radius: 10px; padding: .35rem .6rem; margin: .4rem 0; background: var(--panel); } .mathrow summary { cursor: pointer; font-weight: 700; }
+.act { margin: .4rem 0; display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; } .act select { max-width: 100%; }
+.savecard { align-items: center; }
+tr.tot td { font-weight: 800; border-top: 2px solid var(--line); }
+
+/* ---- player card 2.0 */
+.sheet.wide { width: min(940px, 100%); }
+.rrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .7rem; }
+.rcard { display: flex; gap: .8rem; align-items: center; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: .7rem; }
+.ovr { width: 68px; height: 68px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; flex: none; }
+.ovr b { font-size: 1.5rem; line-height: 1; } .ovr span { font-size: .6rem; letter-spacing: .08em; opacity: .85; }
+.ovr.a { background: #b8860b; } .ovr.b { background: #1f7a49; } .ovr.c { background: #3a6ea5; } .ovr.d { background: #7a7a7a; }
+.rbars { flex: 1; min-width: 0; } .rbar { display: grid; grid-template-columns: 6.2em 1fr 2em; gap: .4rem; align-items: center; font-size: .82rem; margin: .12rem 0; } .rbar b { text-align: right; font-variant-numeric: tabular-nums; }
+.rtrack { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; display: block; } .rtrack i { display: block; height: 100%; border-radius: 4px; } .rtrack i.hi { background: #1f7a49; } .rtrack i.mid { background: #c49a1a; } .rtrack i.lo { background: #b3312d; }
+.sparkwrap { overflow-x: auto; padding-bottom: .2rem; } .sparksvg text { font-size: 8px; fill: var(--ink); } .sparksvg text.sy { fill: var(--muted); } .sparksvg rect.up { fill: #1f7a49; } .sparksvg rect.dn { fill: #b3312d; } .sparksvg .sbase { stroke: var(--muted); stroke-dasharray: 3 3; stroke-width: .8; }

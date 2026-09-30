@@ -37,7 +37,16 @@ export function dailyTeam(entry, rt, day, rng, opts = {}) {
   out.sp = pick;
   // lineup from available hitters, with occasional rest days
   const resting = new Set();
-  if (t.pool) {
+  if (t.pool && t.userDefault) {
+    // the manager saved a default lineup: keep it, only covering for players who are away
+    const bench = (t.hitterIdx || []).map(i => t.P(i)).filter(p => p.bat && !t.lineup.some(x => x.p === p));
+    out.lineup = t.lineup.map(x => {
+      if (x.pos === 1 || isAvail(x.p.idx)) return { p: x.p, pos: x.pos };
+      const sub = bench.find(b => isAvail(b.idx)) || null;
+      if (sub) bench.splice(bench.indexOf(sub), 1);
+      return sub ? { p: sub, pos: x.pos } : { p: x.p, pos: x.pos };
+    });
+  } else if (t.pool) {
     // part-timers and platoon players start only as often as they really did while available
     const pool = t.pool;
     const restP = opts.restP;    // explicit override (playoffs pass 0)
@@ -70,6 +79,7 @@ export function dailyTeam(entry, rt, day, rng, opts = {}) {
     return true;
   }).slice(0, 10);
   if (out.bullpen.length < 4) out.bullpen = t.bullpen.filter(p => p !== pick).slice(0, 8);
+  out.restInfo = 'Days since last start: ' + rot.slice(0, core).map(p => { const l = rt.lastStart.get(p.key); return `${p.name.split(' ').pop()} ${p === pick ? '(today)' : l === undefined ? 'fresh' : (day - l) + 'd'}`; }).join(' · ');
   return out;
 }
 

@@ -30,7 +30,37 @@ export const DEFAULT_STRAT = { steal: 1, bunt: 'default', ibb: 'default', infiel
 export function newBox() {
   return { pa: 0, ab: 0, h: 0, d: 0, t: 0, hr: 0, bb: 0, k: 0, hbp: 0, r: 0, rbi: 0, sb: 0, cs: 0, sf: 0, gdp: 0, sh: 0, ibb: 0 };
 }
-function newPBox() { return { bf: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0, hr: 0, pc: 0, hbp: 0, inn: 0, half: 0 }; }
+function newPBox() { return { bf: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0, hr: 0, pc: 0, hbp: 0, inn: 0, half: 0, halves: 0 }; }
+
+// ---- pitch-by-pitch sequence consistent with the plate-appearance result.
+// b ball, c called strike, s swinging strike, f foul, x in play, h hit by pitch
+const COUNT_W = [[0, 0, .17], [1, 0, .09], [0, 1, .13], [1, 1, .12], [0, 2, .10], [2, 0, .05], [2, 1, .08], [1, 2, .11], [2, 2, .08], [3, 0, .01], [3, 1, .03], [3, 2, .05]];
+function shuffle(a, rng) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function strikeChar(rng) { const u = rng(); return u < 0.5 ? 'c' : u < 0.8 ? 's' : 'f'; }
+function buildSeq(balls, strikes, extraFouls, last, rng) {
+  const pre = [];
+  for (let i = 0; i < balls; i++) pre.push('b');
+  for (let i = 0; i < strikes; i++) pre.push(strikeChar(rng));
+  shuffle(pre, rng);
+  let seq = pre.join('');
+  if (strikes >= 2 && extraFouls) {
+    // fouls with two strikes come after the second strike
+    const arr = seq.split(''); let seen = 0, at = arr.length;
+    for (let i = 0; i < arr.length; i++) if (arr[i] !== 'b' && ++seen === 2) { at = i + 1; break; }
+    arr.splice(at, 0, ...'f'.repeat(extraFouls).split(''));
+    seq = arr.join('');
+  }
+  return seq + last;
+}
+export function pitchSeq(kind, rng) {
+  const extra = () => { const u = rng(); return u < 0.45 ? 0 : u < 0.72 ? 1 : u < 0.88 ? 2 : u < 0.96 ? 3 : 4; };
+  if (kind === 'IBB') return 'bbbb';
+  if (kind === 'K') { const balls = [0, 1, 2, 3][pick([.3, .32, .24, .14], 1, rng())]; return buildSeq(balls, 2, extra(), rng() < 0.6 ? 's' : 'c', rng); }
+  if (kind === 'BB') { const st = pick([.3, .34, .36], 1, rng()); return buildSeq(3, st, st === 2 ? extra() : 0, 'b', rng); }
+  if (kind === 'HBP') { const [b, st] = COUNT_W[pick(COUNT_W.map(x => x[2]), 1, rng())]; return buildSeq(Math.min(b, 3), Math.min(st, 2), st === 2 ? extra() : 0, 'h', rng); }
+  const [b, st] = COUNT_W[pick(COUNT_W.map(x => x[2]), 1, rng())];
+  return buildSeq(b, st, st === 2 ? extra() : 0, 'x', rng);
+}
 
 function pick(w, total, u) {
   let x = u * total;
@@ -46,7 +76,10 @@ export class Sim {
   constructor(away, home, opts = {}) {
     this.teams = [away, home];
     this.opts = Object.assign({ method: 'odds', dh: true, ghost: false, maxInnings: 30, mgr: { 0: 'auto', 1: 'auto' } }, opts);
-    this.rng = opts.rng || mulberry32(opts.seed ?? (Math.random() * 2 ** 32));
+    this.seed = opts.seed ?? ((Math.random() * 2 ** 32) >>> 0);
+    this.rng = opts.rng || mulberry32(this.seed);
+    if (this.opts.threeBatter === undefined) this.opts.threeBatter = home.year >= 2020;
+    this.actions = [];            // human actions, for save/resume
     this.tables = eraTables(home.year);
     this.pf = home.park?.pf || [1, 1, 1, 1];
     // environment baseline = mean of both teams' league-year baselines
@@ -119,11 +152,48 @@ export class Sim {
   scoreDiff(ti) { return this.st.score[ti] - this.st.score[1 - ti]; }
   isOver() { return this.st.over; }
 
+  /** Human moves are recorded (for save/resume); moves made by the auto-manager or a script are not. */
+  rec(a) { if (this._human) this.actions.push(a); }
+  human(fn) { const o = this._human; this._human = true; try { return fn(); } finally { this._human = o; } }
+  /** Re-apply recorded human actions to a fresh sim with the same seed, replaying plate appearances up to each. */
+  replay(actions, paCount) {
+    for (const a of actions) {
+      let g = 0;
+      while (!this.isOver() && this.st.paCount < a.pa && g++ < 5000) this.playPA();
+      this.applyAction(a);
+    }
+    let g = 0;
+    while (!this.isOver() && this.st.paCount < paCount && g++ < 5000) this.playPA();
+  }
+  applyAction(a) {
+    const ti = a.ti, key = k => { const t = this.teams[ti]; const all = [...this.availBench[ti], ...this.availBull[ti], ...this.st.lineup[ti].map(x => x.p), ...t.bench, ...t.bullpen, t.sp]; return all.find(p => p && p.key === k); };
+    this.human(() => {
+      if (a.t === 'ph') this.pinchHit(ti, a.slot, key(a.np), a.pos);
+      else if (a.t === 'pr') this.pinchRun(ti, a.base, key(a.np));
+      else if (a.t === 'sub') this.defSub(ti, a.slot, key(a.np), a.pos);
+      else if (a.t === 'pos') this.changePosition(ti, a.slot, a.pos);
+      else if (a.t === 'pitch') this.replacePitcher(ti, key(a.np), 'manager', true) && this.rec(a);
+      else if (a.t === 'mgr') { this.opts.mgr[ti] = a.v; this.rec(a); }
+      else if (a.t === 'call') { this.manual[a.side][a.key] = a.v; this.rec(a); }
+      else if (a.t === 'rule') { this.opts.threeBatter = a.v; this.rec(a); }
+      else if (a.t === 'strat') { this.strat[ti][a.key] = a.v; this.rec(a); }
+    });
+  }
+
   // ---------------------------------------------------------------- substitutions (used by scripts, auto & manual)
-  replacePitcher(ti, np, why) {
+  /** MLB's three-batter minimum: a pitcher must face 3 batters or finish the half-inning. */
+  canChangePitcher(ti) {
+    if (!this.opts.threeBatter) return true;
+    const b = this.pbx(this.st.pitcher[ti]);
+    return b.bf >= 3 || b.halves >= 1;
+  }
+  battersLeft(ti) { return Math.max(0, 3 - this.pbx(this.st.pitcher[ti]).bf); }
+
+  replacePitcher(ti, np, why, force = false) {
     const st = this.st;
     const old = st.pitcher[ti];
-    if (old === np) return;
+    if (old === np) return false;
+    if (!force && why !== 'pinch-hit for' && !this.canChangePitcher(ti)) return false;
     const lu = st.lineup[ti];
     if (!this.dh || lu.some(x => x.pos === 1)) {
       let slot = lu.findIndex(x => x.p === old);
@@ -136,39 +206,69 @@ export class Sim {
     this.seenPit(ti, np);
     this.availBull[ti] = this.availBull[ti].filter(x => x !== np);
     this.availBench[ti] = this.availBench[ti].filter(x => x !== np);
+    return true;
     // inherited runners' responsibility stays with the previous pitcher (resp field)
   }
-  pinchHit(ti, slot, np, pos = 11) {
-    const st = this.st;
-    const old = st.lineup[ti][slot];
-    this.logSub(ti, `${np.name} pinch-hits for ${old.p.name}`);
-    st.lineup[ti][slot] = { p: np, pos };
-    st.used.add(np.key);
+  fieldPos(old) { return old.pos === 1 || old.pos > 10 ? 11 : old.pos; }
+  posLabel(x) { return (x.tag ? x.tag + (x.pos >= 2 && x.pos <= 10 ? '→' : '') : '') + (x.pos >= 2 && x.pos <= 10 ? (POS_NAME[x.pos] || '') : (x.tag ? '' : (POS_NAME[x.pos] || ''))); }
+  takeFromBench(ti, np) {
+    this.st.used.add(np.key);
     this.seenBat(ti, np);
     this.availBench[ti] = this.availBench[ti].filter(x => x !== np);
     this.availBull[ti] = this.availBull[ti].filter(x => x !== np);
   }
+  /** Pinch-hit for whoever holds `slot` (a pinch hitter or runner already in the game can be replaced too). The new man inherits the defensive position. */
+  pinchHit(ti, slot, np, pos) {
+    const st = this.st, old = st.lineup[ti][slot];
+    const np_ = pos ?? this.fieldPos(old);
+    this.logSub(ti, `${np.name} pinch-hits for ${old.p.name}${np_ >= 2 && np_ <= 10 ? ` and will play ${POS_NAME[np_]}` : ''}`);
+    st.lineup[ti][slot] = { p: np, pos: np_, tag: 'PH' };
+    this.takeFromBench(ti, np);
+    this.rec({ pa: st.paCount, t: 'ph', ti, slot, np: np.key, pos: np_ });
+  }
   pinchRun(ti, base, np) {
     const st = this.st;
     const r = st.bases[base];
-    if (!r) return;
-    this.logSub(ti, `${np.name} pinch-runs for ${r.p.name}`);
+    if (!r) return false;
     const slot = st.lineup[ti].findIndex(x => x.p === r.p);
-    if (slot >= 0) st.lineup[ti][slot] = { p: np, pos: 12 };
+    const old = slot >= 0 ? st.lineup[ti][slot] : null;
+    const np_ = old ? this.fieldPos(old) : 11;
+    this.logSub(ti, `${np.name} pinch-runs for ${r.p.name}${np_ >= 2 && np_ <= 10 ? ` and will play ${POS_NAME[np_]}` : ''}`);
+    if (slot >= 0) st.lineup[ti][slot] = { p: np, pos: np_, tag: 'PR' };
     st.bases[base] = { p: np, resp: r.resp, ti };
-    st.used.add(np.key); this.seenBat(ti, np);
-    this.availBench[ti] = this.availBench[ti].filter(x => x !== np);
+    this.takeFromBench(ti, np);
+    this.rec({ pa: st.paCount, t: 'pr', ti, base, np: np.key });
+    return true;
   }
+  /** Defensive replacement / lineup change for any slot, at any time. */
   defSub(ti, slot, np, pos) {
-    const st = this.st;
-    const old = st.lineup[ti][slot];
-    this.logSub(ti, `${np.name} replaces ${old.p.name} (${POS_NAME[pos] || pos})`);
-    st.lineup[ti][slot] = { p: np, pos };
-    st.used.add(np.key); this.seenBat(ti, np);
-    this.availBench[ti] = this.availBench[ti].filter(x => x !== np);
+    const st = this.st, old = st.lineup[ti][slot];
+    const np_ = pos ?? this.fieldPos(old);
+    this.logSub(ti, `${np.name} replaces ${old.p.name}${np_ >= 2 && np_ <= 10 ? ` at ${POS_NAME[np_]}` : ''}`);
+    st.lineup[ti][slot] = { p: np, pos: np_, tag: old.tag && old.pos > 10 ? old.tag : undefined };
+    this.takeFromBench(ti, np);
+    this.rec({ pa: st.paCount, t: 'sub', ti, slot, np: np.key, pos: np_ });
   }
-  setPosition(ti, slot, pos) { this.st.lineup[ti][slot].pos = pos; }
+  /** Move a fielder to another position; whoever holds it swaps to his old spot. Returns an error string or null. */
+  changePosition(ti, slot, pos) {
+    const lu = this.st.lineup[ti], cur = lu[slot];
+    if (cur.pos === 1 || pos === 1) return 'Pitchers change through a pitching change.';
+    if (pos === 10 && !this.dh) return 'No DH in this game.';
+    if (cur.pos === pos) return null;
+    const other = lu.findIndex((x, i) => i !== slot && x.pos === pos);
+    const old = cur.pos;
+    if (other >= 0 && lu[other].pos === 1) return 'That spot is the pitcher’s.';
+    if (other >= 0 && old > 10) return `${lu[other].p.name} would have nowhere to play — sub him out instead.`;
+    cur.pos = pos;
+    if (other >= 0) lu[other].pos = old;
+    this.logSub(ti, other >= 0 ? `Defensive switch: ${cur.p.name} to ${POS_NAME[pos]}, ${lu[other].p.name} to ${POS_NAME[old]}` : `${cur.p.name} moves to ${POS_NAME[pos]}`);
+    this.rec({ pa: this.st.paCount, t: 'pos', ti, slot, pos });
+    return null;
+  }
+  setPosition(ti, slot, pos) { return this.changePosition(ti, slot, pos); }
   logSub(ti, text) { this.st.log.push({ kind: 'sub', text, inn: this.st.inning, half: this.st.half, ti, score: this.st.score.slice(), outs: this.st.outs }); }
+
+  changePitcher(ti, np, why) { const ok = this.human(() => this.replacePitcher(ti, np, why || 'manager')); if (ok) this.rec({ pa: this.st.paCount, t: 'pitch', ti, np: np.key }); return ok; }
 
   // ---------------------------------------------------------------- scripted (as-played) substitutions
   runScript() {
@@ -186,7 +286,7 @@ export class Sim {
         if (!p || st.used.has(p.key)) { q.shift(); continue; }
         const lu = st.lineup[ti];
         if (s.pos === 1) {
-          this.replacePitcher(ti, p, 'as played'); q.shift(); continue;
+          this.replacePitcher(ti, p, 'as played', true); q.shift(); continue;
         }
         if (s.slot < 0 || s.slot >= 9) { q.shift(); continue; }
         if (s.pos === 11) {
@@ -257,13 +357,14 @@ export class Sim {
     const isSave = closer && cand.includes(closer) && inn >= 9 && lead >= 1 && lead <= 3;
     const highLev = inn >= 7 && Math.abs(lead) <= 3;
     if (isSave) np = closer;
-    else if (highLev) np = cand.find(x => x.role !== 'mop') || cand[0];
+    else if (highLev) np = cand.find(x => x.role === 'setup') || cand.find(x => x.role !== 'mop' && x.role !== 'long') || cand[0];
     else if (inn <= 6 || Math.abs(lead) >= 5) {
       // long man / mop-up
       np = cand.slice().sort((a, c) => c.pit.endur - a.pit.endur || c.pit.wobaAgainst - a.pit.wobaAgainst)[0];
       if (Math.abs(lead) < 5 && inn <= 6) np = cand.slice().sort((a, c) => c.pit.endur - a.pit.endur)[0];
       else np = cand[cand.length - 1];
     } else np = cand[Math.min(cand.length - 1, Math.floor(cand.length / 2))];
+    if (!this.canChangePitcher(ti) && why !== 'pinch-hit for') return;
     this.replacePitcher(ti, np, why);
   }
 
@@ -314,34 +415,44 @@ export class Sim {
     const baseP = this.teamBase[1 - bt].pit;
     const env = isP ? this.env.batP : this.env.bat;
     const envP = this.env.pit;
-    // platoon
+    // platoon: use each player's own left/right split when we have one, otherwise the league split
     const bats = batter.p.bats;
     const thr = pit.throws === 'L' ? 'L' : 'R';
     let side = bats === 'B' ? (thr === 'L' ? 'R' : 'L') : (bats === 'L' ? 'L' : 'R');
-    const plat = this.tables.plat[side][thr];
+    const bV = isP ? null : batter.p.bat.vs?.[thr];
+    const pV = pit.pit.vs?.[side];
+    const bRr = bV || bR, pRr = pV || pR;
+    const platm = (bV || pV) ? null : this.tables.plat[side][thr];
     // fatigue
     const pb = this.pbx(pit);
     const E = pit.pit.endur;
     let fat = 0;
     if (pb.bf > E * 0.85) fat = Math.min(0.6, 0.022 * (pb.bf - E * 0.85));
     const avg = this.opts.method === 'avg';
+    const parts = this.opts.explain ? [] : null;
     let tot = 0;
     for (let i = 0; i < 8; i++) {
-      const rb = bR[i] / baseB[i];
-      const rp = pR[i] / baseP[i];
+      const rb = bRr[i] / baseB[i];
+      const rp = pRr[i] / baseP[i];
       let w;
       if (avg) w = env[i] * 0.5 * (rb + rp);
       else w = rb * rp * env[i];
-      w *= plat[i];
-      if (i >= 3 && i <= 6) w *= this.pf[i - 3];
-      if (fat) { if (i === 0 || i === 7) w /= (1 + fat * 0.5); else w *= (1 + fat); }
+      const pl = platm ? platm[i] : 1;
+      w *= pl;
+      const pfm = i >= 3 && i <= 6 ? this.pf[i - 3] : 1;
+      w *= pfm;
+      let ft = 1;
+      if (fat) { ft = (i === 0 || i === 7) ? 1 / (1 + fat * 0.5) : 1 + fat; w *= ft; }
+      let cm = 1;
       if (this.curCall) {
-        if (this.curCall.hitrun && i === 0) w *= 0.82;
-        if (this.curCall.infieldIn && i === 3) w *= 1.07;
+        if (this.curCall.hitrun && i === 0) { w *= 0.82; cm = 0.82; }
+        if (this.curCall.infieldIn && i === 3) { w *= 1.07; cm = 1.07; }
       }
+      if (parts) parts.push({ ev: EV[i], bat: bRr[i], batLg: baseB[i], pit: pRr[i], pitLg: baseP[i], env: env[i], plat: pl, park: pfm, fat: ft, call: cm, w });
       out[i] = w; tot += w;
     }
     for (let i = 0; i < 8; i++) out[i] /= tot;
+    if (parts) { parts.forEach((x, i) => { x.prob = out[i]; }); out.parts = parts; out.meta = { splitBat: bV ? thr : null, splitPit: pV ? side : null, side, thr, fat, method: avg ? 'average' : 'odds-ratio' }; }
     out.side = side;
     return out;
   }
@@ -369,7 +480,9 @@ export class Sim {
       tot += w[i];
     }
     const k = pick(w, tot, this.rng());
-    return { typ: J.typ[k], zone: J.zone[k] };
+    const res = { typ: J.typ[k], zone: J.zone[k] };
+    if (this.opts.explain) res.why = { tilt: tiltT.map(x => +x.toFixed(3)), dir: dB.map((x, i) => +(x / D[i]).toFixed(3)), top: w.map((x, i) => [J.typ[i] + J.zone[i], x / tot]).sort((a, b) => b[1] - a[1]).slice(0, 4) };
+    return res;
   }
 
   sampleHRZone(side) {
@@ -387,11 +500,12 @@ export class Sim {
     return pooled || arr || null;
   }
   sampleVec(evName, typ, zone, bm, outs) {
-    let arr = null;
-    if (typ && zone) arr = this.lookupTr(`${evName}|${typ}|${zone}|${bm}|${outs}`);
-    if (!arr && typ) arr = this.lookupTr(`${evName}|${typ}|0|${bm}|${outs}`);
-    if (!arr) arr = this.lookupTr(`${evName}|-|0|${bm}|${outs}`);
+    let arr = null, key = `${evName}|${typ}|${zone}|${bm}|${outs}`;
+    if (typ && zone) arr = this.lookupTr(key);
+    if (!arr && typ) arr = this.lookupTr(key = `${evName}|${typ}|0|${bm}|${outs}`);
+    if (!arr) arr = this.lookupTr(key = `${evName}|-|0|${bm}|${outs}`);
     if (!arr) return null;
+    this._vk = key; this._vn = arr.reduce((a, x) => a + x[1], 0);
     let tot = 0; for (const x of arr) tot += x[1];
     let u = this.rng() * tot;
     for (const x of arr) { u -= x[1]; if (u < 0) return x[0]; }
@@ -533,11 +647,11 @@ export class Sim {
     else if (outcome === 'dp') { bx.gdp++; text = `${name} bunts into a double play.`; }
     else text = `${name} fails to get the bunt down and is out.`;
     bx.ab = bx.pa - bx.bb - bx.hbp - bx.sf - bx.sh;
-    pb.pc += kind === 'ibb' ? 4 : 3;
+    const seq = kind === 'ibb' ? 'bbbb' : pitchSeq('X', this.rng); pb.pc += seq.length;
     if (runs) text += ` ${runs} run${runs > 1 ? 's' : ''} score${runs > 1 ? '' : 's'}.`;
     st.slot[ti] = (st.slot[ti] + 1) % 9; st.paCount++; st.halfPA++;
     const entry = { kind: 'pa', text, ev: kind === 'ibb' ? 'IBB' : 'BUNT', typ: kind === 'bunt' ? 'G' : null, zone: kind === 'bunt' ? (outcome === 'bunthit' ? 5 : 1) : 0, batter: name, pitcher: pitcher.name, runs, side: 'R', bunt: true,
-      moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })) };
+      moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })), pitches: seq };
     this.pushLog(entry);
     return this.afterPA(entry, false);
   }
@@ -701,13 +815,15 @@ export class Sim {
     if (call.ibb) return this.resolveWalkOrBunt('ibb', batter, pitcher);
     if (call.bunt) return this.resolveWalkOrBunt('bunt', batter, pitcher, call);
     const probs = this.paProbs(batter, pitcher, ti);
-    const ev = pick(probs, 1, this.rng());
+    const roll = this.rng();
+    const ev = pick(probs, 1, roll);
     const evName = EV[ev];
     const side = probs.side;
     const bm = this.bmask();
     const outs0 = st.outs;
     let typ = null, zone = 0;
-    if (ev === 3 || ev === 4 || ev === 5 || ev === 7) { const s = this.sampleBIP(evName, batter, pitcher, side); typ = s.typ; zone = s.zone; }
+    let bipWhy = null;
+    if (ev === 3 || ev === 4 || ev === 5 || ev === 7) { const s = this.sampleBIP(evName, batter, pitcher, side); typ = s.typ; zone = s.zone; bipWhy = s.why || null; }
     else if (ev === 6) { zone = this.sampleHRZone(side); typ = 'F'; }
     let vec = this.sampleVec(evName, typ, zone, bm, outs0) || this.defaultVec(evName, bm);
     vec = this.tweakVec(vec, evName, typ, bm, outs0, call);
@@ -729,12 +845,13 @@ export class Sim {
     else if (ev >= 3 && ev <= 6) { bx.h++; pb.h++; st.hits[ti]++; if (ev === 4) bx.d++; if (ev === 5) bx.t++; if (ev === 6) { bx.hr++; pb.hr++; } }
     if (gdp) bx.gdp++;
     bx.ab = bx.pa - bx.bb - bx.hbp - bx.sf;
-    const pcBase = ev === 0 ? 4.8 : ev === 1 ? 5.6 : ev === 2 ? 3.2 : 3.3;
-    pb.pc += Math.max(1, Math.round(pcBase + (this.rng() - 0.5) * 2.4));
+    const pitches = pitchSeq(ev === 0 ? 'K' : ev === 1 ? 'BB' : ev === 2 ? 'HBP' : 'X', this.rng);
+    pb.pc += pitches.length;
     const text = this.describe(ev, typ, zone, vec, batter, res, runs, bm, outs0, sf);
     st.slot[ti] = (st.slot[ti] + 1) % 9;
     st.paCount++; st.halfPA++;
-    const entry = { kind: 'pa', text, ev: evName, typ, zone, batter: batter.p.name, pitcher: pitcher.name, runs, side, moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })), outsAdded: res.outsAdded, strat: call.bunt || call.ibb || call.hitrun || call.infieldIn || call.steal ? call : null };
+    const entry = { kind: 'pa', text, ev: evName, typ, zone, batter: batter.p.name, pitcher: pitcher.name, runs, side, moves: res.moves.map(x => ({ name: x.r.p.name, from: x.from, to: x.to })), pitches, outsAdded: res.outsAdded, strat: call.bunt || call.ibb || call.hitrun || call.infieldIn || call.steal ? call : null };
+    if (this.opts.explain) entry.calc = { batter: batter.p.name, pitcher: pitcher.name, parts: probs.parts, meta: probs.meta, roll: roll, outcome: evName, bip: bipWhy, vecKey: this._vk, vecN: this._vn, vec, pitches };
     this.pushLog(entry);
     return this.afterPA(entry, false);
   }
@@ -751,6 +868,8 @@ export class Sim {
     }
     if (st.outs >= 3) {
       st.lineScore[ti][st.inning - 1] = st.curRuns;
+      st.curRuns = 0;                                   // the next half starts at zero (fixes stale runs on the scoreboard)
+      this.pbx(st.pitcher[1 - ti]).halves++;
       st.halfStarted = false;
       if (ti === 0) {
         st.half = 1;

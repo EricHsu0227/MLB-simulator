@@ -7,6 +7,7 @@ import { GameView, teamLabel } from './gameview.js';
 import { registerUniverse } from '../archive.js';
 import { editLineups, applyEdits, reviewOn } from './lineup.js';
 import { playerLink } from './playercard.js';
+import { Recorder, newId, teamSpec, applySpec } from '../saves.js';
 
 const TYPES = [['R', 'Regular season'], ['post', 'Postseason'], ['AS', 'All-Star Game'], ['all', 'All games']];
 const ROUND = { WC: 'Wild Card', DV: 'Division Series', LC: 'LCS', WS: 'World Series', AS: 'All-Star Game', R: '' };
@@ -159,29 +160,55 @@ export async function renderGameMode(root, ctx) {
     async function start() {
       const seed = setup.seed ? [...setup.seed].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) : undefined;
       let a = realGameTeam(S, g, 0), hm = realGameTeam(S, g, 1);
+      let res0 = null;
       if (reviewOn()) {
         const res = await editLineups(root, { away: a, home: hm, dh: !!g.dh, title: 'Set your lineups', subtitle: `${fmtDate(g.date)} — as-played lineups and starters. Change anything you like.` });
         if (!res) { openGame(g); return; }
-        applyEdits(res); a = res.away; hm = res.home;
+        applyEdits(res); a = res.away; hm = res.home; res0 = res;
         if (res.edited[0]) setup.mgrA = setup.mgrA === 'script' ? 'auto' : setup.mgrA;
         if (res.edited[1]) setup.mgrH = setup.mgrH === 'script' ? 'auto' : setup.mgrH;
       }
-      const sim = new Sim(a, hm, {
-        seed, dh: !!g.dh, method: setup.method, ghost: g.type === 'R' && S.y >= 2020,
-        script: { 0: a.script, 1: hm.script }, mgr: { 0: setup.mgrA, 1: setup.mgrH },
-      });
-      registerUniverse('replays', 'Historic game replays');
-      clear(root);
-      const gv = new GameView(sim, {
-        title: `${fmtDate(g.date)} — ${teamLabel(a)} at ${teamLabel(hm)}`,
-        subtitle: ROUND[g.type] || 'Regular season',
-        real: realGamePanel(S, g), realTitle: 'Real game',
-        continueLabel: 'Play again',
-        archive: { universe: 'replays', key: `${g.date}-${g.vis}@${g.home}-${g.num}-${Date.now()}`, kind: 'hist', date: g.date, label: `${S.y} ${ROUND[g.type] || 'regular season'} replay` },
-        onContinue: () => openGame(g),
-      });
-      root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => { gv.destroy(); openGame(g); } }, '‹ Game setup'), gv.root));
+      const cfg = { seed, dh: !!g.dh, method: setup.method, mgr: { 0: setup.mgrA, 1: setup.mgrH } };
+      const specs = [res0 && res0.edited[0] ? teamSpec(a) : null, res0 && res0.edited[1] ? teamSpec(hm) : null];
+      const sim = new Sim(a, hm, simOptsFor(S, g, a, hm, cfg));
+      const run = { id: newId('game'), kind: 'game', title: `${fmtDate(g.date)} — ${S.teams[g.vis]?.n || g.vis} at ${S.teams[g.home]?.n || g.home}`, sub: `${S.y} game replay`, cmds: [],
+        spec: { year: S.y, g: [g.date, g.vis, g.home, g.num || 0], cfg: { ...cfg, seed: sim.seed }, specs } };
+      launch(root, S, g, a, hm, sim, new Recorder(run), () => openGame(g));
     }
   }
   await loadYear();
+}
+
+const simOptsFor = (S, g, a, hm, cfg) => ({
+  seed: cfg.seed, dh: cfg.dh, method: cfg.method, ghost: g.type === 'R' && S.y >= 2020,
+  script: { 0: a.script, 1: hm.script }, mgr: { 0: cfg.mgr[0], 1: cfg.mgr[1] },
+});
+
+function launch(root, S, g, a, hm, sim, rec, back) {
+  registerUniverse('replays', 'Historic game replays');
+  clear(root);
+  const gv = new GameView(sim, {
+    title: `${fmtDate(g.date)} — ${teamLabel(a)} at ${teamLabel(hm)}`,
+    subtitle: ROUND[g.type] || 'Regular season',
+    real: realGamePanel(S, g), realTitle: 'Real game',
+    continueLabel: 'Play again', save: rec,
+    archive: { universe: 'replays', key: `${g.date}-${g.vis}@${g.home}-${g.num}-${rec.run.id}`, kind: 'hist', date: g.date, label: `${S.y} ${ROUND[g.type] || 'regular season'} replay` },
+    onContinue: back,
+  });
+  root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => { gv.destroy(); back(); } }, '‹ Game setup'), gv.root));
+  if (sim.st.paCount) gv.autosave();
+}
+
+/** Resume a saved game: rebuild the sim from its seed and replay your moves. */
+export async function resumeGame(root, ctx, run) {
+  clear(root); root.appendChild(spinner('Loading the game…'));
+  await nextFrame();
+  const sp = run.spec;
+  const S = await loadSeason(sp.year);
+  const g = S.games.find(x => x.date === sp.g[0] && x.vis === sp.g[1] && x.home === sp.g[2] && (x.num || 0) === sp.g[3]);
+  const a = applySpec(realGameTeam(S, g, 0), sp.specs[0]), hm = applySpec(realGameTeam(S, g, 1), sp.specs[1]);
+  const sim = new Sim(a, hm, simOptsFor(S, g, a, hm, sp.cfg));
+  const gm = run.game || { actions: [], pa: 0 };
+  sim.replay(gm.actions, gm.pa);
+  launch(root, S, g, a, hm, sim, new Recorder(run), () => { location.hash = '#/saves'; });
 }

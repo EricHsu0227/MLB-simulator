@@ -4,6 +4,7 @@ import { loadSeason } from '../data.js';
 import { historicPostseason, historicPrepare } from '../post.js';
 import { PostseasonView } from './postview.js';
 import { registerUniverse } from '../archive.js';
+import { Recorder, newId } from '../saves.js';
 
 export async function renderPostMode(root, ctx) {
   const { index } = ctx;
@@ -34,15 +35,38 @@ export async function renderPostMode(root, ctx) {
   async function start() {
     clear(view); view.appendChild(spinner('Loading season…'));
     await nextFrame();
-    const S = await loadSeason(st.year);
-    const ps = historicPostseason(S);
-    const prep = historicPrepare(S, { realSubs: st.realSubs });
+    const spec = { year: st.year, realSubs: st.realSubs, method: st.method, seed: (Math.random() * 2 ** 32) >>> 0 };
+    const run = { id: newId('post'), kind: 'post', title: `${st.year} postseason replay`, sub: 'Postseason', spec, cmds: [] };
     clear(view);
-    const uni = `post-${st.year}`; registerUniverse(uni, `${st.year} postseason replay`);
-    const pv = new PostseasonView(ps, { title: `${st.year} postseason replay`, historic: true, prepare: prep, simOpts: { method: st.method },
-      archiveMeta: (node, pg) => ({ universe: uni, key: `${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${node.label} G${pg.gameNo + 1}` }) });
-    view.appendChild(pv.root);
+    await buildPost(view, run);
     view.scrollIntoView({ behavior: 'smooth' });
   }
   draw();
+}
+
+/** Build (or rebuild and replay) a postseason run inside `view`. */
+async function buildPost(view, run) {
+  const sp = run.spec;
+  const S = await loadSeason(sp.year);
+  const ps = historicPostseason(S);
+  const prep = historicPrepare(S, { realSubs: sp.realSubs });
+  const uni = `post-${sp.year}`; registerUniverse(uni, `${sp.year} postseason replay`);
+  const rec = new Recorder(run);
+  const pv = new PostseasonView(ps, { title: `${sp.year} postseason replay`, historic: true, prepare: prep, simOpts: { method: sp.method }, seed: sp.seed,
+    onCmd: c => rec.add(c),
+    archiveMeta: (node, pg) => ({ universe: uni, key: `${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${node.label} G${pg.gameNo + 1}` }) });
+  const cmds = run.cmds.slice();
+  if (cmds.length) pv.replay(cmds);
+  view.appendChild(pv.root);
+  view.appendChild(h('p', { class: 'muted small' }, '💾 Saved automatically — resume from “Saved games” on the home page.'));
+}
+
+export async function resumePost(root, ctx, run) {
+  clear(root);
+  const box = h('div', { class: 'stack' }, h('h2', null, run.title), h('button', { class: 'btn', onclick: () => { location.hash = '#/saves'; } }, '‹ Saved games'));
+  const view = h('div'); box.appendChild(view); root.appendChild(box);
+  view.appendChild(spinner('Restoring your postseason…'));
+  await nextFrame();
+  clear(view);
+  await buildPost(view, run);
 }

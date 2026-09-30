@@ -55,12 +55,34 @@ No hosting? On the same Wi-Fi run `python3 -m http.server 8000 --bind 0.0.0.0` o
 * **Google / Apple sign-in and sync** are built in but need your own free Firebase project (only you can create the
   Apple/Google credentials): see `docs/SETUP_LOGIN.md`. Without it everything still works, locally.
 
+## Saved runs (resume anything)
+
+Single games save after every move; seasons, custom leagues, tournaments and postseasons save after every command
+(**Saved** in the top bar). A save is the seed plus everything you did, so resuming replays it exactly — same games, same
+scores, same lineup edits and substitutions. Saves live on this device.
+
+## Lefty/righty, ratings, roles
+
+* **Platoon splits.** Every hitter and pitcher has his own real L/R split (regressed toward his overall line and the
+  league platoon effect). They drive the sim, and show on the matchup panel, lineup screens, team pages, the
+  substitution menus and a player's "Lefty / righty" tab (plus every season on "Every season").
+* **Ratings.** 20–80 tool grades and a 1–99 overall for hitters (contact, power, eye, speed) and pitchers (stuff,
+  control, contact management, stamina), shown on player cards and in the substitution menus.
+* **Roles from real usage.** Closer / setup / middle / long / mop-up come from how each pitcher was really used that season;
+  the rotation and days of rest are shown when you change pitchers.
+* **Substitutions.** Anyone in the lineup, including a pinch hitter or runner, can be replaced; PH/PR take over a defensive
+  position; the Managers tab has position selects to change the defence, hands (bats/throws) and splits on every list,
+  a rotation-aware pitching change, and a three-batter-minimum toggle (default on from 2020). "Show the math" adds a tab
+  that breaks down every plate appearance (batter, pitcher, league, platoon, park, fatigue → final odds and the roll).
+* **Default lineups.** Each team-season starts with an auto-built lineup; save your own with "Save as team default".
+
 ## Strategy and animation
 
 During a game you can call a sacrifice bunt, steal, hit-and-run, intentional walk, infield in, or hold the runners.
 For the auto-manager you can set steal aggressiveness, bunting, intentional walks, infield-in situations and the
 starter's leash. Every plate appearance is animated (pitch, ball flight to the fielder or over the fence, runners
-moving) with Full / Quick / Off speed.
+moving) with Full / Quick / Off speed. The animation shows each pitch on a strike-zone chart with the count, fielders
+moving to the ball, throws, a home-run zoom and a run pop on the scoreboard.
 
 ## How the simulation works
 

@@ -1,7 +1,7 @@
 // Mode 3: season mode (also the engine room for custom leagues).
 import { h, clear, select, table, spinner, card, f3, ip, nextFrame, toast, POS } from './common.js';
-import { loadSeason, batLine, pitLine } from '../data.js';
-import { buildTeam, dayNum } from '../teams.js';
+import { loadSeason, batLine, pitLine, wobaOf } from '../data.js';
+import { buildTeam, dayNum, ROLE_NAME } from '../teams.js';
 import { League, dailyTeam, newRuntime } from '../league.js';
 import { playoffFromLeague, historicFormat } from '../post.js';
 import { PostseasonView } from './postview.js';
@@ -9,6 +9,7 @@ import { GameView, teamLabel } from './gameview.js';
 import { editLineups, applyEdits, reviewOn } from './lineup.js';
 import { playerLink } from './playercard.js';
 import { archiveGame, registerUniverse } from '../archive.js';
+import { Recorder, newId, teamSpec, applySpec } from '../saves.js';
 
 const DIV = { E: 'East', C: 'Central', W: 'West', '': '' };
 
@@ -23,10 +24,10 @@ export async function createHistoricLeague(year, opts = {}, progress) {
   const reg = S.games.filter(g => g.type === 'R' && codes.includes(g.vis) && codes.includes(g.home));
   const d0 = dayNum(reg[0].date);
   const schedule = reg.map(g => ({ day: dayNum(g.date) - d0, home: g.home, away: g.vis, date: g.date }));
-  const uni = `season-${year}-${Date.now().toString(36)}`;
+  const uni = opts.uni || `season-${year}-${Date.now().toString(36)}`;
   registerUniverse(uni, `${year} season replay`);
   const lg = new League(entries, schedule, { method: opts.method || 'odds', dhRule: opts.dhRule || 'era', ghost: year >= 2020, seed: opts.seed,
-    onGame: (g, r) => archiveGame(r.sim, { universe: uni, key: `${g.away}@${g.home}#${g.day}`, kind: 'R', date: g.date || null, label: `${year} season` }) });
+    onGame: (g, r) => { if (!lg.replaying) archiveGame(r.sim, { universe: uni, key: `${g.away}@${g.home}#${g.day}`, kind: 'R', date: g.date || null, label: `${year} season` }); } });
   lg.S = S; lg.year = year; lg.universe = uni;
   return lg;
 }
@@ -47,6 +48,32 @@ export class SeasonView {
     this.render();
   }
 
+  // ---------------------------------------------------------- save / resume
+  record(c) { if (this.o.rec) this.o.rec.add(c); }
+  /** Rebuild a saved run by re-doing every command in order (all randomness is seeded). */
+  restore(cmds) {
+    const lg = this.lg, rec = this.o.rec;
+    if (rec) rec.replaying = true;
+    lg.replaying = true;
+    try {
+      for (const c of cmds) {
+        if (c.t === 'days') lg.simDays(c.n);
+        else if (c.t === 'end') lg.simAll();
+        else if (c.t === 'game') {
+          const g = lg.schedule.find(x => !x.done && x.away === c.away && x.home === c.home && x.day === c.day);
+          if (!g) continue;
+          const { at, ht, dh } = lg.buildTeams(g);
+          const sim = lg.makeSim(g, applySpec(at, c.specs && c.specs[0]), applySpec(ht, c.specs && c.specs[1]), dh);
+          sim.replay(c.actions || [], 1e9);
+          lg.finishGame(g, sim.playGame());
+        } else if (c.t === 'po:start') this.startPlayoffs(c.cfg, true);
+        else if (c.t === 'po' && this.po) { this.po.replaying = true; try { this.po.apply(c.c); } finally { this.po.replaying = false; } }
+      }
+    } finally { lg.replaying = false; if (rec) rec.replaying = false; }
+    this.render();
+    if (this.po) this.po.render();
+  }
+
   // ---------------------------------------------------------- actions
   async run(fn) {
     const btns = this.root.querySelectorAll('button');
@@ -55,9 +82,10 @@ export class SeasonView {
     fn();
     this.render();
   }
-  simDays(n) { this.run(() => this.lg.simDays(n)); }
+  simDays(n) { this.record({ t: 'days', n }); this.run(() => this.lg.simDays(n)); }
   async simToEnd() {
     const lg = this.lg;
+    this.record({ t: 'end' });
     this.root.querySelectorAll('button').forEach(b => b.disabled = true);
     const bar = this.root.querySelector('.bar > i');
     while (!lg.done()) {
@@ -71,17 +99,19 @@ export class SeasonView {
   async watch(g) {
     const lg = this.lg;
     let { at, ht, dh } = lg.buildTeams(g);
+    let specs = [null, null];
     if (reviewOn()) {
       const res = await editLineups(this.root, { away: at, home: ht, dh, title: `${lg.by.get(g.away).name} at ${lg.by.get(g.home).name}: set your lineups` });
       if (!res) { this.render(); return; }
       applyEdits(res); at = res.away; ht = res.home;
+      specs = [res.edited[0] ? teamSpec(at) : null, res.edited[1] ? teamSpec(ht) : null];
     }
     const sim = lg.makeSim(g, at, ht, dh);
     const gv = new GameView(sim, {
       title: `${lg.by.get(g.away).name} at ${lg.by.get(g.home).name}`,
       subtitle: g.date ? `Season game` : `Day ${g.day + 1}`,
       continueLabel: 'Back to season',
-      onFinish: r => { lg.finishGame(g, r); },
+      onFinish: r => { lg.finishGame(g, r); this.record({ t: 'game', away: g.away, home: g.home, day: g.day, specs, actions: sim.actions.slice() }); },
       onContinue: () => this.render(),
     });
     clear(this.root);
@@ -176,13 +206,14 @@ export class SeasonView {
     const S = t.S;
     const row = (p, extra = []) => {
       const bl = batLine(S, p.idx);
-      return [h('td', null, playerLink({ p })), p.bats + '/' + p.throws, bl ? bl.pa : '', bl ? f3(bl.avg) + '/' + f3(bl.obp) + '/' + f3(bl.slg) : '', bl ? bl.hr : '', f3(p.bat.woba), ...extra];
+      const sp = k => (p.bat.vs && p.bat.vs[k] ? f3(wobaOf(p.bat.vs[k])) : '—');
+      return [h('td', null, playerLink({ p })), p.bats + '/' + p.throws, bl ? bl.pa : '', bl ? f3(bl.avg) + '/' + f3(bl.obp) + '/' + f3(bl.slg) : '', bl ? bl.hr : '', f3(p.bat.woba), sp('L'), sp('R'), ...extra];
     };
-    wrap.appendChild(card(`${teamLabel(t)} — lineup (real ${t.year} stats)`, table(['Player', 'B/T', 'PA', 'AVG/OBP/SLG', 'HR', 'wOBA (sim rating)', 'Pos'], t.lineup.map(x => row(x.p, [POS[x.pos]])), 'compact')));
-    wrap.appendChild(card('Bench', table(['Player', 'B/T', 'PA', 'AVG/OBP/SLG', 'HR', 'wOBA'], t.bench.map(p => row(p)), 'compact')));
-    const prow = (p, role) => { const pl = pitLine(S, p.idx); return [h('td', null, playerLink({ p })), p.throws, role, pl ? pl.g + '/' + pl.gs : '', pl ? ip(pl.outs ?? pl.ip * 3) : '', pl ? pl.k : '', pl ? pl.bb : '', f3(p.pit.wobaAgainst)]; };
-    wrap.appendChild(card('Rotation', table(['Pitcher', 'T', 'Role', 'G/GS', 'IP', 'K', 'BB', 'wOBA against'], t.rotation.map((p, i) => prow(p, 'SP' + (i + 1))), 'compact')));
-    wrap.appendChild(card('Bullpen', table(['Pitcher', 'T', 'Role', 'G/GS', 'IP', 'K', 'BB', 'wOBA against'], t.bullpen.map(p => prow(p, p.role)), 'compact')));
+    wrap.appendChild(card(`${teamLabel(t)} — lineup (real ${t.year} stats)`, table(['Player', 'B/T', 'PA', 'AVG/OBP/SLG', 'HR', 'wOBA (sim rating)', 'vs LHP', 'vs RHP', 'Pos'], t.lineup.map(x => row(x.p, [POS[x.pos]])), 'compact')));
+    wrap.appendChild(card('Bench', table(['Player', 'B/T', 'PA', 'AVG/OBP/SLG', 'HR', 'wOBA', 'vs LHP', 'vs RHP'], t.bench.map(p => row(p)), 'compact')));
+    const prow = (p, role) => { const pl = pitLine(S, p.idx); return [h('td', null, playerLink({ p })), p.throws, role, pl ? pl.g + '/' + pl.gs : '', pl ? ip(pl.outs ?? pl.ip * 3) : '', pl ? pl.k : '', pl ? pl.bb : '', f3(p.pit.wobaAgainst), p.pit.vs && p.pit.vs.L ? f3(wobaOf(p.pit.vs.L)) : '—', p.pit.vs && p.pit.vs.R ? f3(wobaOf(p.pit.vs.R)) : '—']; };
+    wrap.appendChild(card('Rotation', table(['Pitcher', 'T', 'Role', 'G/GS', 'IP', 'K', 'BB', 'wOBA against', 'vs LHB', 'vs RHB'], t.rotation.map((p, i) => prow(p, 'SP' + (i + 1) + (p.roleWhy ? ' · ' + p.roleWhy.replace(/^Starter — /, '') : ''))), 'compact')));
+    wrap.appendChild(card('Bullpen', table(['Pitcher', 'T', 'Role', 'G/GS', 'IP', 'K', 'BB', 'wOBA against', 'vs LHB', 'vs RHB'], t.bullpen.map(p => prow(p, p.roleWhy || ROLE_NAME[p.role] || p.role)), 'compact')));
     return wrap;
   }
 
@@ -219,8 +250,9 @@ export class SeasonView {
     return wrap;
   }
 
-  startPlayoffs(cfg) {
+  startPlayoffs(cfg, silent) {
     const lg = this.lg;
+    if (!silent) this.record({ t: 'po:start', cfg });
     const ps = playoffFromLeague(lg, cfg);
     const S = lg.S;
     const restRt = new Map(lg.entries.map(e => [e.id, newRuntime(e)]));
@@ -233,7 +265,7 @@ export class SeasonView {
       return t;
     };
     const uni = lg.universe;
-    this.po = new PostseasonView(ps, { title: this.o.title + ' — playoffs', prepare, simOpts: { method: lg.opts.method, ghost: false }, showYear: this.o.kind === 'custom',
+    this.po = new PostseasonView(ps, { title: this.o.title + ' — playoffs', prepare, seed: (lg.opts.seed ^ 0x9e3779b9) >>> 0, onCmd: c => this.record({ t: 'po', c }), simOpts: { method: lg.opts.method, ghost: false }, showYear: this.o.kind === 'custom',
       archiveMeta: uni ? (node, pg) => ({ universe: uni, key: `PO${node.id}:G${pg.gameNo + 1}`, kind: 'post', label: `${node.label} G${pg.gameNo + 1}` }) : null });
     this.render();
   }
@@ -266,11 +298,29 @@ export async function renderSeasonMode(root, ctx) {
   async function start() {
     clear(status); status.appendChild(spinner(`Loading ${st.year} and building rosters…`));
     await nextFrame();
-    const lg = await createHistoricLeague(st.year, st);
-    const fmt = historicFormat(lg.S);
-    const cfg = { perLeague: fmt.perLeague, needs: fmt.needs.length ? fmt.needs : [], finalNeed: fmt.finalNeed, divWinnersFirst: fmt.hasDivs };
-    const view = new SeasonView(lg, { title: `${st.year} season`, kind: 'historic', playoffCfg: cfg });
+    const spec = { kind: 'historic', year: st.year, method: st.method, dhRule: st.dhRule, seed: (Math.random() * 2 ** 32) >>> 0, uni: `season-${st.year}-${Date.now().toString(36)}` };
+    const run = { id: newId('season'), kind: 'season', title: `${st.year} season`, sub: 'Season mode', spec, cmds: [] };
+    const view = await buildSeasonRun(run);
     clear(root);
     root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => renderSeasonMode(root, ctx) }, '‹ New season'), view.root));
   }
+}
+
+/** Build a historic-season run (and replay its saved commands). */
+export async function buildSeasonRun(run) {
+  const sp = run.spec;
+  const lg = await createHistoricLeague(sp.year, sp);
+  const fmt = historicFormat(lg.S);
+  const cfg = { perLeague: fmt.perLeague, needs: fmt.needs.length ? fmt.needs : [], finalNeed: fmt.finalNeed, divWinnersFirst: fmt.hasDivs };
+  const view = new SeasonView(lg, { title: `${sp.year} season`, kind: 'historic', playoffCfg: cfg, rec: new Recorder(run) });
+  if (run.cmds.length) view.restore(run.cmds.slice());
+  return view;
+}
+
+export async function resumeSeason(root, ctx, run) {
+  clear(root); root.appendChild(spinner('Restoring your season — replaying every game you simmed…'));
+  await nextFrame();
+  const view = await buildSeasonRun(run);
+  clear(root);
+  root.appendChild(h('div', { class: 'stack' }, h('button', { class: 'btn', onclick: () => { location.hash = '#/saves'; } }, '‹ Saved games'), view.root));
 }

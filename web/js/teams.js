@@ -1,5 +1,6 @@
 // Team construction: auto-managed team-seasons, as-played game rosters, postseason rosters.
 import { makePlayer, teamLeague, getGlobal } from './data.js';
+import { applyUserDefault } from './lineups.js';
 
 export function dayNum(d) { return Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100) / 86400000; }
 
@@ -14,19 +15,48 @@ function parkFor(S, code) {
 
 export function finishRoles(team) { return finish(team); }
 
+const ROLE_ORDER = { closer: 0, setup: 1, mid: 2, long: 3, mop: 4 };
+const ROLE_NAME = { closer: 'Closer', setup: 'Setup', mid: 'Middle relief', long: 'Long man', mop: 'Mop-up' };
+export { ROLE_NAME };
+const ordinalInn = n => { const r = Math.round(n); return r + (r === 1 ? 'st' : r === 2 ? 'nd' : r === 3 ? 'rd' : 'th'); };
+
+/** Bullpen roles from how each pitcher was really used that season (saves, finishing games, inning he usually entered). */
 function finish(team) {
-  // bullpen roles
   const pen = team.bullpen;
-  pen.forEach(p => { p.role = 'mid'; });
-  if (pen.length) {
+  pen.forEach(p => { p.role = 'mid'; p.roleWhy = ''; });
+  if (!pen.length) return team;
+  const use = p => p.use && p.use.rel >= 3 ? { entry: p.use.entry / p.use.rel, bf: p.use.bf / p.use.rel, rel: p.use.rel } : null;
+  const real = pen.filter(use).length >= Math.min(4, pen.length);
+  if (real) {
+    const sv = p => p.pit.sv || 0, gf = p => p.pit.gf || 0;
+    const byClose = pen.slice().sort((a, b) => (sv(b) * 3 + gf(b)) - (sv(a) * 3 + gf(a)));
+    const c0 = byClose[0];
+    const u0 = use(c0);
+    if (c0 && (sv(c0) >= 5 || (u0 && u0.entry >= 8.3 && gf(c0) >= 8))) { c0.role = 'closer'; }
+    for (const p of pen) {
+      if (p.role === 'closer') continue;
+      const u = use(p);
+      if (!u) { p.role = 'mop'; continue; }
+      if (u.entry >= 6.7 && u.rel >= 10) p.role = 'setup';
+      else if (u.entry < 5.3 || u.bf >= 6.5) p.role = 'long';
+      else p.role = 'mid';
+    }
+    // keep the setup group to the best few; the rest are middle relief
+    const setups = pen.filter(p => p.role === 'setup').sort((a, b) => a.pit.wobaAgainst - b.pit.wobaAgainst);
+    setups.slice(3).forEach(p => { p.role = 'mid'; });
+    // the least-used arms are mop-up
+    const low = pen.filter(p => p.role === 'mid' || p.role === 'long').sort((a, b) => (use(a)?.rel ?? 0) - (use(b)?.rel ?? 0)).slice(0, 2);
+    low.forEach(p => { if (use(p) && use(p).rel < 12) p.role = 'mop'; });
+    for (const p of pen) { const u = use(p); p.roleWhy = `${ROLE_NAME[p.role]}${u ? ` — ${u.rel} relief apps, usually entered in the ${ordinalInn(u.entry)}${p.pit.sv ? `, ${p.pit.sv} SV` : ''}` : ''}`; }
+  } else {
     const ranked = pen.slice().sort((a, b) => (b.pit.sv * 3 + b.pit.gf) - (a.pit.sv * 3 + a.pit.gf));
     if (ranked[0].pit.sv + ranked[0].pit.gf >= 3 || pen.length > 2) ranked[0].role = 'closer';
     const rest = pen.filter(p => p.role !== 'closer').sort((a, b) => a.pit.wobaAgainst - b.pit.wobaAgainst);
     rest.slice(0, 2).forEach(p => { p.role = 'setup'; });
     rest.slice(-2).forEach(p => { if (p.role === 'mid') p.role = 'mop'; });
-    const order = { closer: 0, setup: 1, mid: 2, mop: 3 };
-    pen.sort((a, b) => order[a.role] - order[b.role] || a.pit.wobaAgainst - b.pit.wobaAgainst);
+    for (const p of pen) p.roleWhy = `${ROLE_NAME[p.role]}${p.pit.sv ? ` — ${p.pit.sv} SV` : ''}`;
   }
+  pen.sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.pit.wobaAgainst - b.pit.wobaAgainst);
   return team;
 }
 
@@ -82,11 +112,12 @@ export function buildTeam(S, code, opts = {}) {
   const cnt = new Map();      // `${pos}|${idx}` -> starts
   const slotSum = new Map(), slotN = new Map();
   const apps = new Map();     // hitters appearances
-  const gs = new Map(), pg = new Map(), firstStart = new Map();
+  const gs = new Map(), pg = new Map(), firstStart = new Map(), useMap = new Map();
   for (const g of games) {
     const home = g.home === code;
     const bat = home ? g.hb : g.vb;
     const sp = home ? g.hsp : g.vsp;
+    for (const pl of g.pl) if (pl[0] === (home ? 1 : 0) && pl[1] !== sp) { const u = useMap.get(pl[1]) || { rel: 0, entry: 0, bf: 0 }; u.rel++; u.entry += pl[9] || 1; u.bf += pl[3] || 0; useMap.set(pl[1], u); }
     bat.forEach(([idx, pos], s) => {
       const k = pos + '|' + idx;
       cnt.set(k, (cnt.get(k) || 0) + 1);
@@ -114,16 +145,18 @@ export function buildTeam(S, code, opts = {}) {
   let rotIdx = rot.slice(0, rsize).map(x => x[0]).sort((a, b) => firstStart.get(a) - firstStart.get(b));
   if (rotIdx.length < 3) rotIdx = [...pg.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(x => x[0]);
   const rotation = rotIdx.map(P);
+  rotation.forEach((p, i) => { p.rotSlot = i + 1; p.roleWhy = `Starter — ${gs.get(rotIdx[i]) || 0} GS`; });
   const extraStarters = rot.slice(rsize, rsize + 4).map(x => x[0]).filter(i => !rotIdx.includes(i)).map(P);
   const rotSet = new Set(rotIdx);
   const penAllIdx = [...pg.entries()].filter(([i]) => !rotSet.has(i)).sort((a, b) => b[1] - a[1]).slice(0, S.y < 1950 ? 9 : 16).map(x => x[0]);
-  const pen = penAllIdx.slice(0, Math.max(7, S.y < 1950 ? 5 : 9)).map(P);
+  const withUse = i => { const pl = P(i); pl.use = useMap.get(i) || null; return pl; };
+  const pen = penAllIdx.slice(0, Math.max(7, S.y < 1950 ? 5 : 9)).map(withUse);
   const bench = hitters.filter(i => !used.has(i) && (!pg.has(i) || (apps.get(i) || 0) > 15)).slice(0, 8).map(P).filter(p => p.bat.pa > 0);
   const team = {
     key: S.y + code, code, year: S.y, name: S.teams[code]?.n || code, lg, S, dh,
     park: parkFor(S, code),
     lineup: lineup.map(x => ({ p: P(x.idx), pos: x.pos })),
-    rotation, extraStarters, sp: rotation[0], bench, bullpen: pen, penAll: penAllIdx.map(P), lookup: P,
+    rotation, extraStarters, sp: rotation[0], bench, bullpen: pen, penAll: penAllIdx.map(withUse), lookup: P,
     pool, hitterIdx: hitters, P,
     getAvail() { return (this._avail ||= buildAvailability(S, code)); },
   };
@@ -135,7 +168,7 @@ export function buildTeam(S, code, opts = {}) {
   ensurePitcher();
   finish(team);
   finish({ bullpen: team.penAll });
-  return team;
+  return applyUserDefault(team);
 }
 
 /** Pick the day's lineup from the pool: skip unavailable / resting players. Returns lineup entries or null. */
