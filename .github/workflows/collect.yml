@@ -1,0 +1,25 @@
+name: Collect season data
+on:
+  push:
+    branches: [data-2026]
+    paths: [.github/workflows/collect.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p seasons
+          gh run download 38129076641 -R ${{ github.repository }} -D dl
+          find dl -name "*.tar.gz" -exec mv {} seasons/ \;
+          ls -la seasons
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add seasons
+          git commit -m "season data tarballs"
+          git push
