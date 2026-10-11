@@ -283,6 +283,12 @@ tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 45%, tran
 textarea#exporttext { width: 100%; min-height: 320px; font: 12px var(--font-mono); background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px; margin-top: 8px }
 .gline.rec { grid-template-columns: minmax(0, 1fr) auto }
 pre.gametext { grid-column: 1 / -1; font: 11.5px/1.4 var(--font-mono); background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 10px; overflow-x: auto; max-height: 520px; margin: 6px 0 0 }
+
+.tpick { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 10px; margin-top: 8px }
+.tpick label.on { font-weight: 600 }
+.tpick b { color: var(--felt) }
+tr.po td { background: color-mix(in srgb, var(--felt) 10%, transparent) !important }
+.resume { border-left: 4px solid var(--gold) }
 </style>
 </head>
 <body>
@@ -295,6 +301,7 @@ pre.gametext { grid-column: 1 / -1; font: 11.5px/1.4 var(--font-mono); backgroun
     <button data-tab="post">Postseason</button>
     <button data-tab="exh">Exhibition</button>
     <button data-tab="hist">Real Games</button>
+    <button data-tab="tour">Tournament</button>
     <button data-tab="records">Scorebook</button>
     <button data-tab="cards">Cards</button>
     <button data-tab="rules">Rules</button>

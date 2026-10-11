@@ -55,7 +55,7 @@ class Game {
   constructor(D, setup) {
     this.D = D;
     this.cards = D.cards;
-    this.rng = mulberry32(setup.seed != null ? setup.seed : (Math.random() * 2 ** 31) | 0);
+    this._s = (setup.seed != null ? setup.seed : (Math.random() * 2 ** 31)) | 0;
     this.opts = Object.assign({ bpEffects: true, bpFielder: true, autoRunner: true, wildPlays: true, styles: ['N', 'N'], dh: true, fatigueLvl: 2, advErrors: true }, setup.opts || {});
     this.park = setup.park; this.parkCode = setup.parkCode;
     this.weather = setup.weather;
@@ -104,7 +104,29 @@ class Game {
   pitcherOf(side) { return this.teams[side].pitcher; }
   get off() { return this.teams[this.half]; }
   get def() { return this.teams[1 - this.half]; }
+  rng() { let a = this._s = (this._s + 0x6D2B79F5) | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
   rnd(n) { return Math.floor(this.rng() * n); }
+  // ---------- save / restore ----------
+  toJSON() {
+    const o = {};
+    for (const k of Object.keys(this)) {
+      if (['D', 'cards', 'park', 'bc', 'pc', 'cur', 'd', 'hr'].includes(k)) continue;
+      o[k] = this[k];
+    }
+    o.teams = this.teams.map(T => Object.assign({}, T, { used: Array.from(T.used), tired: T.tired ? Array.from(T.tired) : null }));
+    o.log = this.log.map((e, i) => i < this.log.length - 6 ? Object.assign({}, e, { lines: (e.lines || []).map(l => [l[0], l[1]]) }) : e);
+    o.plays = null;
+    return o;
+  }
+  static restore(D, o) {
+    const g = Object.create(Game.prototype);
+    Object.assign(g, o);
+    g.D = D; g.cards = D.cards; g.park = D.parks[o.parkCode];
+    g.teams = o.teams.map(T => Object.assign({}, T, { used: new Set(T.used), tired: T.tired ? new Set(T.tired) : null }));
+    g.plays = g.log.filter(e => e.type === 'PA' || e.type === 'SB');
+    g.cur = g.plays.length ? g.plays[g.plays.length - 1] : null;
+    return g;
+  }
   roll() { return { w: 1 + this.rnd(6), b: 1 + this.rnd(6), r: this.rnd(10), g: this.rnd(10), p: this.rnd(10) }; }
   d6() { return 1 + this.rnd(6); }
   d10() { return this.rnd(10); }

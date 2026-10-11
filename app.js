@@ -38,8 +38,9 @@ main.addEventListener('change', e => { const el = e.target.closest('[data-chg]')
 function render() {
   document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === st.tab ? 'true' : 'false'));
   if (!D) return;
-  const v = { records: vRecords, home: vHome, game: vGame, season: vSeason, post: vPost, exh: vExh, hist: vHist, cards: vCards, rules: vRules }[st.tab] || vHome;
+  const v = { tour: vTour, records: vRecords, home: vHome, game: vGame, season: vSeason, post: vPost, exh: vExh, hist: vHist, cards: vCards, rules: vRules }[st.tab] || vHome;
   main.innerHTML = v();
+  if (st.game && !st.game.busy) saveLive();
   if (st.tab === 'game') { const l = $('.log'); if (l) l.scrollTop = 0; }
 }
 
@@ -47,7 +48,20 @@ function render() {
 // state: season & postseason
 // ======================================================
 let S = null, P = null;
-function loadState() { S = store.get('bsb-season'); P = store.get('bsb-post'); st.one = store.get('bsb-one'); }
+function loadState() {
+  S = store.get('bsb-season'); P = store.get('bsb-post'); st.one = store.get('bsb-one'); st.exhSeries = store.get('bsb-exh'); st.tour = store.get('bsb-tour');
+  const L = store.get('bsb-live');
+  if (L && L.g) { try { st.game = { g: B.Game.restore(D, L.g), ctx: L.ctx, dec: {}, lowerTab: L.lowerTab, lastCall: L.lastCall, timers: [], resumed: true }; } catch (e) { store.del('bsb-live'); } }
+}
+let saveT = null;
+function saveLive(now) {
+  const GS = st.game; if (!GS) return;
+  if (GS.g.over) { store.del('bsb-live'); return; }
+  const doSave = () => { saveT = null; store.set('bsb-live', { g: GS.g, ctx: GS.ctx, lowerTab: GS.lowerTab, lastCall: GS.lastCall, ts: Date.now() }); };
+  if (now) { if (saveT) clearTimeout(saveT); doSave(); } else if (!saveT) saveT = setTimeout(doSave, 250);
+}
+addEventListener('pagehide', () => saveLive(true));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveLive(true); });
 function saveSeason() { if (S) store.set('bsb-season', S); }
 function savePost() { if (P) store.set('bsb-post', P); }
 
@@ -163,16 +177,18 @@ function startGame(setup, ctx) {
   const user = ctx.user || 'none';
   g.teams[0].ai = !(user === 'away' || user === 'both');
   g.teams[1].ai = !(user === 'home' || user === 'both');
-  st.game = { g, ctx, setup, dec: {}, lastIdx: 0 };
+  st.game = { g, ctx, setup, dec: {}, lastIdx: 0, timers: [] };
+  saveLive(true);
   st.tab = 'game'; render(); window.scrollTo(0, 0);
 }
 function gameFinished() {
   const GS = st.game; if (!GS || GS.recorded) return;
-  GS.recorded = true;
+  GS.recorded = true; store.del('bsb-live');
   const ctx = GS.ctx, g = GS.g;
   if (ctx.kind === 'season' && S) { accumulate(S, g, ctx.gid); logPitching(S, g, dayNum(g.date)); while (S.next < S.sched.length && S.res[S.sched[S.next]]) S.next++; saveSeason(); }
   if (ctx.kind === 'post' && P) { recordSeriesGame(P, ctx.sid, g); savePost(); }
-  if (ctx.kind === 'exh' && st.exhSeries) recordSeriesGame(st.exhSeries, 'x', g);
+  if (ctx.kind === 'exh' && st.exhSeries) { recordSeriesGame(st.exhSeries, 'x', g); store.set('bsb-exh', st.exhSeries); }
+  if (ctx.kind === 'tour' && st.tour) tourRecord(st.tour, ctx, g);
   if (ctx.kind === 'one' && st.one) { recordSeriesGame(st.one, ctx.sid, g); store.set('bsb-one', st.one); }
   const sid = ctx.sid ? seriesLabel(ctx.kind === 'post' ? P : ctx.kind === 'one' ? st.one : st.exhSeries, ctx.sid) : '';
   const id = ctx.kind === 'season' ? 'S:' + ctx.gid : (ctx.kind + ':' + Date.now());
@@ -237,13 +253,14 @@ function act(a, el) {
       if (x.away === x.home) { toast('Pick two different teams.'); return; }
       const opts = readOpts();
       st.exhSeries = { id: 'x', hi: x.home, lo: x.away, best: x.n, fixed: $('#exfmt').value === 'fixed', wins: { [x.home]: 0, [x.away]: 0 }, games: [], round: 'EXH', opts, user: x.user, tired: {} };
+      store.set('bsb-exh', x.n === 1 ? null : st.exhSeries);
       if (x.n === 1) { st.exhSeries = null; startGame({ away: x.away, home: x.home, date: '20250715', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, opts }, { kind: 'exh', user: x.user }); return; }
       render(); return;
     }
     case 'exh-next': { const s = st.exhSeries; const gs = seriesGameSetup(s, null); startGame(gs.setup, { kind: 'exh', user: s.user, sid: 'x' }); return; }
-    case 'exh-sim': { const s = st.exhSeries; simSeriesGame(s, null); render(); return; }
-    case 'exh-simall': { const s = st.exhSeries; let k = 0; while (!seriesOver(s) && k++ < 20) simSeriesGame(s, null); render(); return; }
-    case 'exh-reset': st.exhSeries = null; render(); return;
+    case 'exh-sim': { const s = st.exhSeries; simSeriesGame(s, null); store.set('bsb-exh', s); render(); return; }
+    case 'exh-simall': { const s = st.exhSeries; let k = 0; while (!seriesOver(s) && k++ < 20) simSeriesGame(s, null); store.set('bsb-exh', s); render(); return; }
+    case 'exh-reset': st.exhSeries = null; store.del('bsb-exh'); render(); return;
     // ----- historical -----
     case 'hist-play': case 'hist-sim': {
       const ref = D.gamesById[v]; const asP = $('#hasp').checked, wx = $('#hwx').checked, user = $('#huser').value;
@@ -270,6 +287,26 @@ function act(a, el) {
     case 'post-simser': { const s = P.series.find(x => x.id === v); let k = 0; while (!seriesOver(s) && k++ < 10) simSeriesGame(s, P); advancePost(P); savePost(); render(); return; }
     case 'post-simround': { let k = 0; const r = P.round; P.series.filter(s => s.round === r && s.hi && s.lo).forEach(s => { while (!seriesOver(s) && k++ < 60) simSeriesGame(s, P); }); advancePost(P); savePost(); render(); return; }
     case 'post-simall': { let guard = 0; while (!P.champ && guard++ < 10) { P.series.filter(s => s.round === P.round && s.hi && s.lo).forEach(s => { let k = 0; while (!seriesOver(s) && k++ < 10) simSeriesGame(s, P); }); advancePost(P); } savePost(); render(); return; }
+    // ----- tournaments -----
+    case 'tpick': { const sel = st.tourPick = st.tourPick || []; const i = sel.indexOf(v); if (i >= 0) sel.splice(i, 1); else sel.push(v); st.tourName = ($('#tname') || {}).value || st.tourName; render(); return; }
+    case 'tq': { const all = TEAMLIST(); st.tourName = ($('#tname') || {}).value || st.tourName;
+      st.tourPick = v === 'NONE' ? [] : v === 'ALL' ? all.slice() : v === 'P25' ? REAL_SEEDS.AL.concat(REAL_SEEDS.NL) : all.filter(c => D.teams[c].lg === v); render(); return; }
+    case 'tour-new': {
+      let teams = (st.tourPick || []).slice(); const fmt = $('#tfmt').value; const seed = $('#tseed').value;
+      const w25 = { TOR: 94, SEA: 90, CLE: 88, NYA: 94, BOS: 89, DET: 87, MIL: 97, PHI: 96, LAN: 93, CHN: 92, SDN: 90, CIN: 83 };
+      const realW = (c) => { const gs = D.games.filter(g => g.ty === 'r' && (g.v === c || g.h === c)); return gs.filter(g => (g.v === c) === (g.sc[0] > g.sc[1])).length; };
+      if (seed === 'record' || fmt !== 'bracket') teams.sort((a, b) => realW(b) - realW(a));
+      if (seed === 'random') for (let i = teams.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [teams[i], teams[j]] = [teams[j], teams[i]]; }
+      const poSize = Math.min(+$('#tpo').value, teams.length);
+      st.tour = newTour({ name: $('#tname').value || 'Tournament', teams, format: fmt, rrGames: +$('#trr').value, poSize: Math.max(2, poSize), bestPO: +$('#tbest').value, bestFinal: +$('#tfinal').value, myTeam: $('#tmy').value, seedOrder: teams });
+      store.set('bsb-tour', st.tour); render(); return; }
+    case 'tour-reset': { if (!st.tour.champ && el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to abandon'; return; } st.tour = null; store.del('bsb-tour'); render(); return; }
+    case 'tour-play-rr': { const t = st.tour; const i = tourNextRR(t); const x = t.rr[i]; startGame(tourGameSetup(t, x.v, x.h, x.day), { kind: 'tour', rr: i, user: tourUser(t, x.v, x.h) }); return; }
+    case 'tour-sim-rr': { tourSimRR(st.tour, +v); render(); return; }
+    case 'tour-play-s': { const t = st.tour; const s = t.series.find(x => x.id === v); const gs = seriesGameSetup(s, t); startGame(gs.setup, { kind: 'tour', sid: s.id, user: tourUser(t, gs.setup.away, gs.setup.home) }); return; }
+    case 'tour-sim-s': { const t = st.tour; tourSimSeries(t, t.series.find(x => x.id === v), false); render(); return; }
+    case 'tour-sim-ser': { const t = st.tour; tourSimSeries(t, t.series.find(x => x.id === v), true); render(); return; }
+    case 'tour-sim-all': { const t = st.tour; let guard = 0; while (!t.champ && guard++ < 200) { const open = t.series.filter(s => !seriesOver(s)); if (!open.length) break; open.forEach(s => tourSimSeries(t, s, true)); } store.set('bsb-tour', t); render(); return; }
     // ----- records / export -----
     case 'rec-view': st.recOpen = st.recOpen === v ? null : v; render(); return;
     case 'rec-export': { const r = (st.recs || []).find(x => x.id === v); if (r) offerFile(fileBase(r) + '.txt', gameText(r)); return; }
@@ -355,7 +392,7 @@ const ARC = {
     try { const tx = db.transaction('games', 'readwrite'); const os = tx.objectStore('games'); all.filter(r => r.kind === kind).forEach(r => os.delete(r.id)); } catch (e) { }
   }
 };
-const KINDN = { season: 'Season replay', post: 'Postseason', one: 'Single series', exh: 'Exhibition', hist: 'Real game replay' };
+const KINDN = { tour: 'Tournament', season: 'Season replay', post: 'Postseason', one: 'Single series', exh: 'Exhibition', hist: 'Real game replay' };
 function archiveGame(g, kind, label, id, keepUth) {
   const box = g.teams.map(T => ({
     code: T.code, name: T.name, abbr: T.abbr,
@@ -456,6 +493,7 @@ function newPost(seeds, o) {
 function seriesOver(s) { if (!s.hi || !s.lo) return true; if (s.fixed) return s.games.length >= s.best; const need = Math.floor(s.best / 2) + 1; return (s.wins[s.hi] || 0) >= need || (s.wins[s.lo] || 0) >= need; }
 function homeOfGame(s, k) {
   // k: 0-based game number; returns home team code
+  if (s.round === 'TOUR') { if (s.best >= 7) return [0, 1, 5, 6].includes(k) ? s.hi : s.lo; if (s.best === 5) return [0, 1, 4].includes(k) ? s.hi : s.lo; return k % 2 === 0 ? s.hi : s.lo; }
   if (s.round === 'WC') return s.hi;
   if (s.round === 'DS') return [0, 1, 4].includes(k) ? s.hi : s.lo;
   if (s.round === 'LCS' || s.round === 'WS') return [0, 1, 5, 6].includes(k) ? s.hi : s.lo;
@@ -486,18 +524,20 @@ function recordSeriesGame(s0, sid, g) {
   s.games.push({ v: g.teams[0].code, h: g.teams[1].code, sc: g.score.slice(), w: winner });
   const stt = s0.series ? s0 : s;
   stt.bat = stt.bat || {}; stt.pit = stt.pit || {}; stt.res = stt.res || {};
+  const keepRec = stt.rec; if (s0.from === 'tour') stt.rec = null;
   accumulate(stt, g, sid + '-' + s.games.length);
+  stt.rec = keepRec;
   const day = 100 + (s.games.length - 1) + (ROUNDS.indexOf(s.round) + 1) * 10;
   stt.plog = stt.plog || {}; logPitching(stt, g, day);
   if (seriesOver(s) && !s.fixed) s.winner = (s.wins[s.hi] || 0) > (s.wins[s.lo] || 0) ? s.hi : s.lo;
-  if (s0.series && s0.from !== 'one') advancePost(s0);
+  if (s0.series && s0.from !== 'one' && s0.from !== 'tour') advancePost(s0);
 }
 function simSeriesGame(s, P) {
   if (seriesOver(s)) return;
   const gs = seriesGameSetup(s, P);
   const g = AI.buildGame(D, gs.setup); AI.simGame(g);
   recordSeriesGame(P || s, s.id, g);
-  const kind = !P ? 'exh' : (P.from === 'one' ? 'one' : 'post');
+  const kind = !P ? 'exh' : (P.from === 'one' ? 'one' : P.from === 'tour' ? 'tour' : 'post');
   archiveGame(g, kind, KINDN[kind] + ' · ' + seriesLabel(P || s, s.id), kind + ':' + Date.now() + ':' + s.id + s.games.length, false); st.recs = null;
 }
 function advancePost(P) {
@@ -536,7 +576,7 @@ function seedsFromSeason() {
 // ======================================================
 function vHome() {
   const cur = st.game && !st.game.g.over;
-  return `<section class="hero"><div class="eyebrow">2025 card set · Under The Hood standard rules</div>
+  return `${cur ? '' : ''}<section class="hero"><div class="eyebrow">2025 card set · Under The Hood standard rules</div>
   <h1>Pull up a box seat.</h1>
   <p>Every 2025 player card, ballpark card and Tri-Fold chart, played by the book. Each at-bat shows the dice, the card it hit, and every chart the play passed through.</p></section>
   <div class="modes">
@@ -546,10 +586,12 @@ function vHome() {
       <div class="row"><button class="btn go" data-act="tab" data-v="post">${P ? 'Continue postseason' : 'Open bracket'}</button></div></div>
     <div class="mode"><div class="eyebrow">Any matchup</div><h3>Exhibition</h3><p class="muted">Any two 2025 teams for one game or a best-of series. Manage one side, both sides, or watch the AI play it out.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="exh">Set up a game</button></div></div>
+    <div class="mode"><div class="eyebrow">Your rules</div><h3>Custom tournament</h3><p class="muted">Pick any clubs and run a knockout bracket, a round robin, or a round robin into playoffs, with your own series lengths.</p>
+      <div class="row"><button class="btn go" data-act="tab" data-v="tour">${st.tour ? 'Continue tournament' : 'Build a tournament'}</button></div></div>
     <div class="mode"><div class="eyebrow">${D.games.length.toLocaleString()} games</div><h3>Real games</h3><p class="muted">Pick any game played in 2025, regular season or postseason, and replay it with the as-played lineups and the actual game-time weather.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="hist">Find a game</button></div></div>
   </div>
-  ${cur ? `<div class="panel" style="margin-top:16px"><div class="row"><b>Game in progress:</b> ${esc(st.game.g.teams[0].name)} ${st.game.g.score[0]}, ${esc(st.game.g.teams[1].name)} ${st.game.g.score[1]} <button class="btn sm" data-act="tab" data-v="game">Back to the game</button></div></div>` : ''}`;
+  ${cur ? `<div class="panel resume" style="margin-top:16px"><div class="eyebrow">Saved game in progress · ${esc(KINDN[st.game.ctx.kind] || 'Game')}</div><div class="row" style="justify-content:space-between"><b style="font:700 18px var(--font-display)">${esc(st.game.g.teams[0].abbr)} ${st.game.g.score[0]}, ${esc(st.game.g.teams[1].abbr)} ${st.game.g.score[1]} · ${st.game.g.half === 0 ? 'Top' : 'Bottom'} ${B.ord(st.game.g.inning)}, ${st.game.g.outs} out</b><button class="btn go" data-act="tab" data-v="game">Resume game</button></div></div>` : ''}`;
 }
 
 // ---------- game view ----------
@@ -637,7 +679,7 @@ function nowHtml(g, GS) {
     const w = g.teams[g.winner];
     const ctx = GS.ctx; let extra = '';
     if (ctx.kind === 'hist') { const r = D.gamesById[ctx.ref]; extra = `<p class="muted" style="margin:4px 0 0">Actual result: ${team(r.v).abbr} ${r.sc[0]}, ${team(r.h).abbr} ${r.sc[1]}.</p>`; }
-    const back = { season: ['season', 'Back to the season'], post: ['post', 'Back to the bracket'], one: ['post', 'Back to the series'], hist: ['hist', 'Pick another real game'], exh: ['exh', 'Back to exhibition'] }[ctx.kind] || ['home', 'Home'];
+    const back = { tour: ['tour', 'Back to the tournament'], season: ['season', 'Back to the season'], post: ['post', 'Back to the bracket'], one: ['post', 'Back to the series'], hist: ['hist', 'Pick another real game'], exh: ['exh', 'Back to exhibition'] }[ctx.kind] || ['home', 'Home'];
     return `<h2>${esc(w ? w.name : 'Tie')} win ${Math.max(...g.score)}–${Math.min(...g.score)}</h2>${extra}<div class="row" style="margin-top:8px"><button class="btn go" data-act="tab" data-v="${back[0]}">${back[1]}</button><button class="btn" data-act="ltab" data-v="box">Box score</button></div>`;
   }
   const off = g.off, def = g.def; const bcid = g.batterCid(); const bc = g.batterCard(); const pc = D.cards[def.pitcher];
@@ -913,6 +955,7 @@ async function playStep() {
   const n0 = g.log.length;
   const userDec = Object.keys(GS.dec).length ? GS.dec : null;
   AI.aiStep(g, userDec); GS.dec = {};
+  saveLive(true);
   const evs = g.log.slice(n0); const ev = evs.filter(e => e.type !== 'SUB').pop() || evs[evs.length - 1];
   if (g.over) gameFinished();
   GS.lastCall = callFor(ev);
@@ -1116,6 +1159,148 @@ function serBox(s) {
     ${!over && P.round === s.round ? `<div class="row"><button class="btn sm go" data-act="post-play" data-v="${s.id}">Play G${s.games.length + 1}</button><button class="btn sm" data-act="post-sim" data-v="${s.id}">Sim G${s.games.length + 1}</button><button class="btn sm" data-act="post-simser" data-v="${s.id}">Sim series</button></div>` : ''}</div>`;
 }
 
+
+
+// ======================================================
+// custom tournaments
+// ======================================================
+function bracketOrder(n) { let o = [1]; while (o.length < n) { const m = o.length * 2; o = o.flatMap(x => [x, m + 1 - x]); } return o; }
+function rrSchedule(teams, reps) {
+  const t = teams.slice(); if (t.length % 2) t.push(null);
+  const n = t.length, rounds = [];
+  for (let r = 0; r < n - 1; r++) {
+    const games = [];
+    for (let i = 0; i < n / 2; i++) { const a = t[i], b = t[n - 1 - i]; if (a && b) games.push((r + i) % 2 ? [a, b] : [b, a]); }
+    rounds.push(games); t.splice(1, 0, t.pop());
+  }
+  const out = [];
+  for (let k = 0; k < reps; k++) rounds.forEach((gs, r) => gs.forEach(([v, h]) => out.push({ v: k % 2 ? h : v, h: k % 2 ? v : h, day: (k * rounds.length + r) * 2, sc: null })));
+  return out;
+}
+function newTour(o) {
+  const t = { from: 'tour', name: o.name, teams: o.teams, format: o.format, rrGames: o.rrGames, poSize: o.poSize, bestPO: o.bestPO, bestFinal: o.bestFinal, myTeam: o.myTeam,
+    opts: readOpts(), rr: [], rec: {}, series: [], rounds: [], champ: null, plog: {}, rot: {}, res: {}, bat: {}, pit: {}, stage: 'rr', seeds: [] };
+  t.teams.forEach(c => { t.rec[c] = { W: 0, L: 0, RS: 0, RA: 0, home: [0, 0], away: [0, 0], last10: [] }; t.rot[c] = 0; });
+  if (o.format === 'bracket') { t.stage = 'po'; tourBracket(t, o.seedOrder); }
+  else t.rr = rrSchedule(t.teams, o.rrGames);
+  return t;
+}
+function tourStandings(t) { return t.teams.slice().sort((a, b) => { const A = t.rec[a], Bv = t.rec[b]; const pa = A.W / Math.max(1, A.W + A.L), pb = Bv.W / Math.max(1, Bv.W + Bv.L); return pb - pa || (Bv.RS - Bv.RA) - (A.RS - A.RA); }); }
+function tourBracket(t, seeds) {
+  t.seeds = seeds.slice(); t.stage = 'po';
+  const P = seeds.length, size = 2 ** Math.ceil(Math.log2(Math.max(2, P)));
+  const nRounds = Math.log2(size);
+  const order = bracketOrder(size);
+  t.rounds = [];
+  for (let r = 0; r < nRounds; r++) t.rounds.push(Array.from({ length: size / 2 ** (r + 1) }, (_, i) => null));
+  // first round slots
+  t.slots = order.map(sd => sd <= P ? seeds[sd - 1] : null);
+  t.nRounds = nRounds; t.series = [];
+  tourAdvance(t);
+}
+function tourMk(t, r, i, a, b) {
+  const sa = t.seeds.indexOf(a), sb = t.seeds.indexOf(b);
+  const hi = sa <= sb ? a : b, lo = hi === a ? b : a;
+  const best = r === t.nRounds - 1 ? t.bestFinal : t.bestPO;
+  const s = { id: `T${r}-${i}`, round: 'TOUR', r, i, best, hi, lo, wins: { [hi]: 0, [lo]: 0 }, games: [], winner: null };
+  t.series.push(s); t.rounds[r][i] = s.id; return s;
+}
+function tourAdvance(t) {
+  if (t.stage !== 'po') return;
+  const by = (id) => t.series.find(s => s.id === id);
+  for (let r = 0; r < t.nRounds; r++) {
+    for (let i = 0; i < t.rounds[r].length; i++) {
+      if (t.rounds[r][i]) { const s = by(t.rounds[r][i]); if (s && !s.winner && seriesOver(s)) s.winner = (s.wins[s.hi] || 0) > (s.wins[s.lo] || 0) ? s.hi : s.lo; continue; }
+      const feed = (j) => { if (r === 0) return { team: t.slots[j], done: true }; const id = t.rounds[r - 1][j]; if (id === 'BYE') return { team: t.byeWinner[(r - 1) + ':' + j], done: true }; const s = id && by(id); return s && s.winner ? { team: s.winner, done: true } : { team: null, done: false }; };
+      const A = feed(2 * i), Bf = feed(2 * i + 1);
+      if (!A.done || !Bf.done) continue;
+      if (A.team && Bf.team) tourMk(t, r, i, A.team, Bf.team);
+      else { t.rounds[r][i] = 'BYE'; t.byeWinner = t.byeWinner || {}; t.byeWinner[r + ':' + i] = A.team || Bf.team; }
+    }
+  }
+  const finalId = t.rounds[t.nRounds - 1][0];
+  if (finalId === 'BYE') t.champ = t.byeWinner[(t.nRounds - 1) + ':0'];
+  else { const f = finalId && by(finalId); if (f && f.winner) { t.champ = f.winner; t.stage = 'done'; } }
+}
+function tourGameSetup(t, v, h, day) {
+  t.plog = t.plog || {};
+  const sp = [pickStarter(t, v, day), pickStarter(t, h, day)];
+  return { away: v, home: h, date: '20250801', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, sp, tired: [tiredSet(t, v, day), tiredSet(t, h, day)], opts: t.opts, isPost: false };
+}
+function tourUser(t, v, h) { const m = t.myTeam; if (m === 'all') return 'both'; if (m === v) return 'away'; if (m === h) return 'home'; return 'none'; }
+function tourNextRR(t) { return t.rr.findIndex(x => !x.sc); }
+function tourRecord(t, ctx, g) {
+  if (ctx.rr != null) {
+    const x = t.rr[ctx.rr]; x.sc = g.score.slice();
+    accumulate(t, g, 'R' + ctx.rr); logPitching(t, g, x.day);
+    if (tourNextRR(t) < 0 && t.format === 'rrpo') tourBracket(t, tourStandings(t).slice(0, t.poSize));
+    else if (tourNextRR(t) < 0) { t.stage = 'done'; t.champ = tourStandings(t)[0]; }
+  } else {
+    recordSeriesGame(t, ctx.sid, g); tourAdvance(t);
+  }
+  store.set('bsb-tour', t);
+}
+function tourSimRR(t, n) {
+  let k = 0;
+  while (k++ < n) {
+    const i = tourNextRR(t); if (i < 0) break;
+    const x = t.rr[i]; const g = AI.buildGame(D, tourGameSetup(t, x.v, x.h, x.day)); AI.simGame(g);
+    archiveGame(g, 'tour', `${t.name} · round robin`, 'tour:' + Date.now() + ':' + i, false);
+    tourRecord(t, { rr: i }, g);
+  }
+  st.recs = null;
+}
+function tourSimSeries(t, s, all) {
+  let k = 0;
+  do { if (seriesOver(s)) break; simSeriesGame(s, t); tourAdvance(t); k++; } while (all && k < 10);
+  store.set('bsb-tour', t);
+}
+function vTour() {
+  const t = st.tour;
+  if (!t) {
+    const sel = st.tourPick || [];
+    const quick = [['AL', 'American League'], ['NL', 'National League'], ['P25', '2025 playoff teams'], ['ALL', 'All 30'], ['NONE', 'Clear']];
+    return `<div class="section"><div class="panel"><h2>Custom tournament</h2><p class="muted">Pick any 2025 clubs and a format. Round-robin games rotate starters with rest days, and playoff series follow 2-2-1 (five games) or 2-3-2 (seven games) home field for the higher seed.</p>
+      <div class="row" style="align-items:end;margin-top:10px"><label class="fld">Name <input type="text" id="tname" value="${esc(st.tourName || 'Box Seat Invitational')}"></label>
+        <label class="fld">Format <select id="tfmt"><option value="bracket">Bracket (knockout series)</option><option value="rrpo">Round robin, then playoffs</option><option value="rr">Round robin only</option></select></label>
+        <label class="fld">Round-robin meetings <select id="trr">${[1, 2, 3, 4, 6].map(n => `<option ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <label class="fld">Playoff teams <select id="tpo">${[2, 4, 6, 8, 12, 16].map(n => `<option ${n === 4 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <label class="fld">Series length <select id="tbest">${[1, 3, 5, 7].map(n => `<option value="${n}" ${n === 5 ? 'selected' : ''}>Best of ${n}</option>`).join('')}</select></label>
+        <label class="fld">Final <select id="tfinal">${[1, 3, 5, 7].map(n => `<option value="${n}" ${n === 7 ? 'selected' : ''}>Best of ${n}</option>`).join('')}</select></label>
+        <label class="fld">Seeding (bracket) <select id="tseed"><option value="pick">Order picked</option><option value="record">2025 record</option><option value="random">Random draw</option></select></label>
+        <label class="fld">You manage <select id="tmy"><option value="none">Nobody (watch)</option><option value="all">Every game, both sides</option>${TEAMLIST().map(c => `<option value="${c}">${esc(tName(c))}</option>`).join('')}</select></label></div>
+      <div class="row" style="margin-top:12px"><span class="eyebrow">Teams (${sel.length} picked)</span>${quick.map(([k, l]) => `<button class="btn sm" data-act="tq" data-v="${k}">${l}</button>`).join('')}</div>
+      <div class="tpick">${TEAMLIST().map(c => `<label class="chk ${sel.includes(c) ? 'on' : ''}"><input type="checkbox" data-act="tpick" data-v="${c}" ${sel.includes(c) ? 'checked' : ''}> ${sel.includes(c) ? `<b>${sel.indexOf(c) + 1}</b> ` : ''}${esc(tName(c))}</label>`).join('')}</div>
+      <div style="margin-top:10px">${optsBlock()}</div>
+      <div class="row" style="margin-top:12px"><button class="btn go" data-act="tour-new" ${sel.length < 2 ? 'disabled' : ''}>Start tournament</button></div></div></div>`;
+  }
+  const nxt = tourNextRR(t);
+  let body = '';
+  if (t.rr.length) {
+    const stand = tourStandings(t);
+    body += `<div class="panel"><div class="row" style="justify-content:space-between"><h3>Round robin · ${t.rr.filter(x => x.sc).length} of ${t.rr.length} games</h3>
+      ${nxt >= 0 ? `<div class="row"><button class="btn go sm" data-act="tour-play-rr">Play next</button><button class="btn sm" data-act="tour-sim-rr" data-v="1">Sim next</button><button class="btn sm" data-act="tour-sim-rr" data-v="10">Sim 10</button><button class="btn sm" data-act="tour-sim-rr" data-v="9999">Sim the rest</button></div>` : ''}</div>
+      ${nxt >= 0 ? `<p class="muted">Next: ${esc(tName(t.rr[nxt].v))} at ${esc(tName(t.rr[nxt].h))}</p>` : ''}
+      <div class="scroll"><table class="mini"><thead><tr><th class="l">#</th><th class="l">Team</th><th>W</th><th>L</th><th>Pct</th><th>RS</th><th>RA</th><th>Diff</th></tr></thead><tbody>${stand.map((c, i) => { const r = t.rec[c]; return `<tr class="${t.format === 'rrpo' && i < t.poSize ? 'po' : ''}"><td class="l">${i + 1}</td><td class="l">${esc(tName(c))}</td><td>${r.W}</td><td>${r.L}</td><td>${avg3(r.W / Math.max(1, r.W + r.L))}</td><td>${r.RS}</td><td>${r.RA}</td><td>${r.RS - r.RA > 0 ? '+' : ''}${r.RS - r.RA}</td></tr>`; }).join('')}</tbody></table></div>
+      ${t.format === 'rrpo' ? `<p class="muted" style="font-size:13px">Top ${t.poSize} advance to the playoffs.</p>` : ''}</div>`;
+  }
+  if (t.stage !== 'rr' && t.rounds.length) {
+    const by = (id) => t.series.find(s => s.id === id);
+    const rname = (r) => { const left = t.nRounds - r; return left === 1 ? 'Final' : left === 2 ? 'Semifinals' : left === 3 ? 'Quarterfinals' : `Round ${r + 1}`; };
+    body += `<div class="bracket tb" style="grid-template-columns:repeat(${t.nRounds}, minmax(190px,1fr))">${t.rounds.map((round, r) => `<div style="display:grid;gap:10px;align-content:start"><div class="eyebrow">${rname(r)} · best of ${r === t.nRounds - 1 ? t.bestFinal : t.bestPO}</div>${round.map(id => {
+      if (id === 'BYE') return '';
+      const s = id && by(id);
+      if (!s) return `<div class="ser"><span class="muted">Awaiting winners</span></div>`;
+      const over = seriesOver(s);
+      return `<div class="ser">${[s.hi, s.lo].map(c => `<div class="t ${s.winner === c ? 'win' : ''}"><span>${t.seeds.indexOf(c) + 1} ${esc(tName(c))}</span><b>${s.wins[c] || 0}</b></div>`).join('')}
+        ${s.games.length ? `<div class="muted" style="font-size:12px">${s.games.map((g, i) => `G${i + 1} ${team(g.v).abbr} ${g.sc[0]}-${g.sc[1]} ${team(g.h).abbr}`).join(' · ')}</div>` : ''}
+        ${!over ? `<div class="row"><button class="btn sm go" data-act="tour-play-s" data-v="${s.id}">Play G${s.games.length + 1}</button><button class="btn sm" data-act="tour-sim-s" data-v="${s.id}">Sim G${s.games.length + 1}</button><button class="btn sm" data-act="tour-sim-ser" data-v="${s.id}">Sim series</button></div>` : ''}</div>`;
+    }).join('')}</div>`).join('')}</div>`;
+  }
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${{ bracket: 'Knockout bracket', rrpo: 'Round robin + playoffs', rr: 'Round robin' }[t.format]} · ${t.teams.length} teams</div>
+    <h2>${t.champ ? esc(tName(t.champ)) + ' win the ' + esc(t.name) : esc(t.name)}</h2></div>
+    <div class="row">${t.stage === 'po' && !t.champ ? `<button class="btn sm" data-act="tour-sim-all">Sim the rest</button>` : ''}<button class="btn sm" data-act="tour-reset">${t.champ ? 'New tournament' : 'Abandon tournament'}</button></div></div></div>${body}</div>`;
+}
 
 // ---------- records ----------
 const recSort = (a, b) => (a.date || '').localeCompare(b.date || '') || a.ts - b.ts;
