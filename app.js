@@ -101,12 +101,12 @@ function accumulate(stt, g, gid) {
   g.teams.forEach((T, s) => {
     for (const b of Object.values(T.bat)) {
       const x = stt.bat[b.cid] = stt.bat[b.cid] || { G: 0, PA: 0, AB: 0, R: 0, H: 0, D: 0, T: 0, HR: 0, RBI: 0, BB: 0, SO: 0, HBP: 0, SB: 0, CS: 0, SF: 0, SH: 0, tm: T.code };
-      x.G++; for (const k of ['PA', 'AB', 'R', 'H', 'D', 'T', 'HR', 'RBI', 'BB', 'SO', 'HBP', 'SB', 'CS', 'SF', 'SH']) x[k] += b[k];
+      x.G++; for (const k of ['PA', 'AB', 'R', 'H', 'D', 'T', 'HR', 'RBI', 'BB', 'SO', 'HBP', 'SB', 'CS', 'SF', 'SH', 'IBB', 'WPA']) x[k] = (x[k] || 0) + (b[k] || 0);
     }
     for (const p of Object.values(T.pit)) {
       const x = stt.pit[p.cid] = stt.pit[p.cid] || { G: 0, GS: 0, W: 0, L: 0, SV: 0, OUTS: 0, H: 0, R: 0, ER: 0, BB: 0, SO: 0, HR: 0, BF: 0, tm: T.code };
       x.G++; if (p.cid === T.spCid) x.GS++; if (p.dec === 'W') x.W++; if (p.dec === 'L') x.L++; if (p.dec === 'S') x.SV++;
-      for (const k of ['OUTS', 'H', 'R', 'ER', 'BB', 'SO', 'HR', 'BF']) x[k] += p[k];
+      for (const k of ['OUTS', 'H', 'R', 'ER', 'BB', 'SO', 'HR', 'BF', 'HBP', 'D', 'T', 'SF', 'SH', 'IBB', 'WPA']) x[k] = (x[k] || 0) + (p[k] || 0);
     }
   });
   if (stt.rec) {
@@ -313,11 +313,14 @@ function act(a, el) {
     case 'rec-bulk': { const recs = scopedRecs(); if (!recs.length) { toast('No games in this scope yet.'); return; } const sc = (st.recScope || 'all');
       if (v === 'txt') offerFile(`box-seat-${sc}-games.txt`, recs.slice().sort(recSort).map(gameText).join('\n\n' + '='.repeat(72) + '\n\n'));
       if (v === 'json') offerFile(`box-seat-${sc}-games.json`, JSON.stringify(recs.slice().sort(recSort), null, 1));
+      if (v === 'pbp') offerFile(`box-seat-${sc}-play-by-play.csv`, pbpCSV(recs.slice().sort(recSort)));
       if (v === 'bat') offerFile(`box-seat-${sc}-batting.csv`, battingCSV(statsFromRecords(recs).bat));
       if (v === 'pit') offerFile(`box-seat-${sc}-pitching.csv`, pitchingCSV(statsFromRecords(recs).pit));
       return; }
     case 'rec-close': st.exportText = null; render(); return;
     case 'rec-copy': { const ta = $('#exporttext'); try { navigator.clipboard.writeText(ta.value).then(() => toast('Copied'), () => { ta.select(); toast('Selected — press copy'); }); } catch (e) { ta.select(); } return; }
+    case 'game-pbp': { const r = archiveLike(g); if (v === 'csv') offerFile(fileBase(r) + '-pbp.csv', pbpCSV([r])); else offerFile(fileBase(r) + '-pbp.txt', pbpText(r)); return; }
+    case 'rec-pbp': { const r = (st.recs || []).find(x => x.id === v); if (r) offerFile(fileBase(r) + '-pbp.csv', pbpCSV([r])); return; }
     case 'game-export': { const r = archiveLike(g); offerFile(fileBase(r) + '.txt', gameText(r)); return; }
     case 'rec-more': st.recLimit = (st.recLimit || 100) + 200; render(); return;
     // ----- single series -----
@@ -396,14 +399,15 @@ const KINDN = { tour: 'Tournament', season: 'Season replay', post: 'Postseason',
 function archiveGame(g, kind, label, id, keepUth) {
   const box = g.teams.map(T => ({
     code: T.code, name: T.name, abbr: T.abbr,
-    bat: Object.values(T.bat).sort((a, b) => (a.order - b.order) || ((a.sub ? 1 : 0) - (b.sub ? 1 : 0))).map(b => ({ cid: b.cid, n: tn(b.cid), pos: b.pos, sub: !!b.sub, PA: b.PA, AB: b.AB, R: b.R, H: b.H, D: b.D, T: b.T, HR: b.HR, RBI: b.RBI, BB: b.BB, SO: b.SO, HBP: b.HBP, SB: b.SB, CS: b.CS, SF: b.SF, SH: b.SH, GDP: b.GDP })),
-    pit: T.pitOrder.map(cid => { const p = T.pit[cid]; return { cid, n: tn(cid), GS: cid === T.spCid ? 1 : 0, OUTS: p.OUTS, BF: p.BF, H: p.H, R: p.R, ER: p.ER, BB: p.BB, SO: p.SO, HR: p.HR, HBP: p.HBP, WP: p.WP, dec: p.dec }; })
+    bat: Object.values(T.bat).sort((a, b) => (a.order - b.order) || ((a.sub ? 1 : 0) - (b.sub ? 1 : 0))).map(b => ({ cid: b.cid, n: tn(b.cid), pos: b.pos, sub: !!b.sub, PA: b.PA, AB: b.AB, R: b.R, H: b.H, D: b.D, T: b.T, HR: b.HR, RBI: b.RBI, BB: b.BB, SO: b.SO, HBP: b.HBP, SB: b.SB, CS: b.CS, SF: b.SF, SH: b.SH, GDP: b.GDP, IBB: b.IBB || 0, WPA: +(b.WPA || 0).toFixed(4) })),
+    pit: T.pitOrder.map(cid => { const p = T.pit[cid]; return { cid, n: tn(cid), GS: cid === T.spCid ? 1 : 0, OUTS: p.OUTS, BF: p.BF, H: p.H, R: p.R, ER: p.ER, BB: p.BB, SO: p.SO, HR: p.HR, HBP: p.HBP, WP: p.WP, D: p.D || 0, T: p.T || 0, SF: p.SF || 0, SH: p.SH || 0, IBB: p.IBB || 0, WPA: +(p.WPA || 0).toFixed(4), dec: p.dec }; })
   }));
   const w = g.weather || {};
   const rec = { id: id || ('X' + Date.now() + Math.random().toString(36).slice(2, 6)), kind, label: label || KINDN[kind], date: g.date || '', ts: Date.now(),
     park: g.park.name, wx: `${w.temp}° ${w.dn === 'D' ? 'day' : 'night'}, ${w.roof ? 'roof closed' : (w.dir ? `wind ${w.speed} mph ${C.windDir[w.dir].toLowerCase()}` : 'calm')}`,
     score: g.score.slice(), line: g.line.map(l => l.slice()), hits: g.hits.slice(), errors: g.errors.slice(), inn: g.inning - (g.half === 0 ? 1 : 0), box,
-    pbp: g.log.map(e => [e.inning, e.half, e.desc || '', keepUth && e.lines ? e.lines.filter(l => !String(l[0]).startsWith('res')).map(l => l[1]) : null]) };
+    pbp: g.log.map(e => [e.inning, e.half, e.desc || '', keepUth && e.lines ? e.lines.filter(l => !String(l[0]).startsWith('res')).map(l => l[1]) : null,
+      e.type === 'SUB' ? { t: 'SUB' } : { t: e.type, b: e.batter != null ? tn(e.batter) : '', run: e.runner != null ? tn(e.runner) : '', p: e.pitcher != null ? tn(e.pitcher) : '', o: e.outsBefore, s: e.sitBefore || '', r: e.result || '', sc: e.scoreAfter || null, weB: e.weB != null ? +e.weB.toFixed(4) : null, weA: e.weA != null ? +e.weA.toFixed(4) : null, wpa: e.wpa != null ? +e.wpa.toFixed(4) : null }]) };
   ARC.put(rec);
   return rec;
 }
@@ -418,10 +422,10 @@ function gameText(r) {
   [0, 1].forEach(s => L.push(padE(r.box[s].abbr, 6) + Array.from({ length: n }, (_, i) => pad(r.line[s][i] == null ? (i < r.line[s].length ? '' : 'x') : r.line[s][i], 3)).join('') + '  ' + pad(r.score[s], 3) + pad(r.hits[s], 3) + pad(r.errors[s], 3)));
   for (const T of r.box) {
     L.push(''); L.push(T.name.toUpperCase());
-    L.push(padE('Batter', 28) + ['AB', 'R', 'H', 'RBI', 'BB', 'SO', '2B', '3B', 'HR'].map(h => pad(h, 4)).join(''));
-    T.bat.forEach(b => L.push(padE((b.sub ? '  ' : '') + b.n + ' ' + b.pos, 28) + [b.AB, b.R, b.H, b.RBI, b.BB, b.SO, b.D, b.T, b.HR].map(v => pad(v, 4)).join('')));
-    L.push(padE('Pitcher', 28) + ['IP', 'H', 'R', 'ER', 'BB', 'SO', 'HR'].map(h => pad(h, 5)).join(''));
-    T.pit.forEach(p => L.push(padE(p.n + (p.dec ? ` (${p.dec})` : ''), 28) + [ipStr(p.OUTS), p.H, p.R, p.ER, p.BB, p.SO, p.HR].map(v => pad(v, 5)).join('')));
+    L.push(padE('Batter', 28) + ['AB', 'R', 'H', 'RBI', 'BB', 'SO', '2B', '3B', 'HR'].map(h => pad(h, 4)).join('') + pad('WPA', 8));
+    T.bat.forEach(b => L.push(padE((b.sub ? '  ' : '') + b.n + ' ' + b.pos, 28) + [b.AB, b.R, b.H, b.RBI, b.BB, b.SO, b.D, b.T, b.HR].map(v => pad(v, 4)).join('') + pad(b.WPA != null ? wpaStr(b.WPA) : '', 8)));
+    L.push(padE('Pitcher', 28) + ['IP', 'H', 'R', 'ER', 'BB', 'SO', 'HR'].map(h => pad(h, 5)).join('') + pad('WPA', 8));
+    T.pit.forEach(p => L.push(padE(p.n + (p.dec ? ` (${p.dec})` : ''), 28) + [ipStr(p.OUTS), p.H, p.R, p.ER, p.BB, p.SO, p.HR].map(v => pad(v, 5)).join('') + pad(p.WPA != null ? wpaStr(p.WPA) : '', 8)));
   }
   if (r.pbp && r.pbp.length) {
     L.push(''); L.push('PLAY-BY-PLAY'); let key = null;
@@ -437,25 +441,49 @@ const csvEsc = (v) => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '
 function statsFromRecords(recs) {
   const bat = {}, pit = {};
   for (const r of recs) for (const T of r.box) {
-    for (const b of T.bat) { const x = bat[b.cid] = bat[b.cid] || { n: b.n, tm: T.abbr, G: 0, PA: 0, AB: 0, R: 0, H: 0, D: 0, T: 0, HR: 0, RBI: 0, BB: 0, SO: 0, HBP: 0, SB: 0, CS: 0, SF: 0, SH: 0, GDP: 0 }; x.G++; for (const k in x) if (typeof x[k] === 'number' && k !== 'G' && b[k] != null) x[k] += b[k]; }
-    for (const p of T.pit) { const x = pit[p.cid] = pit[p.cid] || { n: p.n, tm: T.abbr, G: 0, GS: 0, W: 0, L: 0, SV: 0, OUTS: 0, BF: 0, H: 0, R: 0, ER: 0, BB: 0, SO: 0, HR: 0, HBP: 0 }; x.G++; x.GS += p.GS; if (p.dec === 'W') x.W++; if (p.dec === 'L') x.L++; if (p.dec === 'S') x.SV++; for (const k of ['OUTS', 'BF', 'H', 'R', 'ER', 'BB', 'SO', 'HR', 'HBP']) x[k] += p[k] || 0; }
+    for (const b of T.bat) { const x = bat[b.cid] = bat[b.cid] || { n: b.n, tm: T.abbr, G: 0, PA: 0, AB: 0, R: 0, H: 0, D: 0, T: 0, HR: 0, RBI: 0, BB: 0, IBB: 0, SO: 0, HBP: 0, SB: 0, CS: 0, SF: 0, SH: 0, GDP: 0, WPA: 0 }; x.G++; for (const k in x) if (typeof x[k] === 'number' && k !== 'G' && b[k] != null) x[k] += b[k]; }
+    for (const p of T.pit) { const x = pit[p.cid] = pit[p.cid] || { n: p.n, tm: T.abbr, G: 0, GS: 0, W: 0, L: 0, SV: 0, OUTS: 0, BF: 0, H: 0, R: 0, ER: 0, BB: 0, SO: 0, HR: 0, HBP: 0, D: 0, T: 0, SF: 0, SH: 0, IBB: 0, WPA: 0 }; x.G++; x.GS += p.GS; if (p.dec === 'W') x.W++; if (p.dec === 'L') x.L++; if (p.dec === 'S') x.SV++; for (const k of ['OUTS', 'BF', 'H', 'R', 'ER', 'BB', 'SO', 'HR', 'HBP', 'D', 'T', 'SF', 'SH', 'IBB', 'WPA']) x[k] += p[k] || 0; }
   }
   return { bat, pit };
 }
 const WW = { BB: .689, HBP: .720, S: .882, D: 1.254, T: 1.590, HR: 2.050 };
+function wobaBat(x) { const ubb = (x.BB || 0) - (x.IBB || 0); const s1 = x.H - x.D - x.T - x.HR; const den = (x.AB || 0) + ubb + (x.SF || 0) + (x.HBP || 0); return den ? (WW.BB * ubb + WW.HBP * (x.HBP || 0) + WW.S * s1 + WW.D * x.D + WW.T * x.T + WW.HR * x.HR) / den : null; }
+function wobaPit(x) { const ubb = (x.BB || 0) - (x.IBB || 0); const s1 = x.H - (x.D || 0) - (x.T || 0) - x.HR; const den = (x.BF || 0) - (x.IBB || 0) - (x.SH || 0); return den > 0 ? (WW.BB * ubb + WW.HBP * (x.HBP || 0) + WW.S * s1 + WW.D * (x.D || 0) + WW.T * (x.T || 0) + WW.HR * x.HR) / den : null; }
+const f3 = (v) => v == null || !isFinite(v) ? '' : v.toFixed(3);
+const wpaStr = (v) => v == null ? '' : (v >= 0 ? '+' : '') + v.toFixed(3);
 function battingCSV(bat) {
-  const head = ['Player', 'Team', 'G', 'PA', 'AB', 'R', 'H', '2B', '3B', 'HR', 'RBI', 'BB', 'SO', 'HBP', 'SB', 'CS', 'SF', 'SH', 'GDP', 'AVG', 'OBP', 'SLG', 'OPS', 'wOBA'];
+  const head = ['Player', 'Team', 'G', 'PA', 'AB', 'R', 'H', '2B', '3B', 'HR', 'RBI', 'BB', 'IBB', 'SO', 'HBP', 'SB', 'CS', 'SF', 'SH', 'GDP', 'AVG', 'OBP', 'SLG', 'OPS', 'wOBA', 'WPA'];
   const rows = Object.values(bat).sort((a, b) => b.PA - a.PA).map(x => {
     const avg = x.H / (x.AB || 1), obp = (x.H + x.BB + x.HBP) / ((x.AB + x.BB + x.HBP + x.SF) || 1), slg = (x.H + x.D + 2 * x.T + 3 * x.HR) / (x.AB || 1);
-    const s1 = x.H - x.D - x.T - x.HR; const wo = (WW.BB * x.BB + WW.HBP * x.HBP + WW.S * s1 + WW.D * x.D + WW.T * x.T + WW.HR * x.HR) / ((x.AB + x.BB + x.SF + x.HBP) || 1);
-    return [x.n, x.tm, x.G, x.PA, x.AB, x.R, x.H, x.D, x.T, x.HR, x.RBI, x.BB, x.SO, x.HBP, x.SB, x.CS, x.SF, x.SH, x.GDP, avg.toFixed(3), obp.toFixed(3), slg.toFixed(3), (obp + slg).toFixed(3), wo.toFixed(3)];
+    return [x.n, x.tm, x.G, x.PA, x.AB, x.R, x.H, x.D, x.T, x.HR, x.RBI, x.BB, x.IBB || 0, x.SO, x.HBP, x.SB, x.CS, x.SF, x.SH, x.GDP, avg.toFixed(3), obp.toFixed(3), slg.toFixed(3), (obp + slg).toFixed(3), f3(wobaBat(x)), (x.WPA || 0).toFixed(3)];
   });
   return [head].concat(rows).map(r => r.map(csvEsc).join(',')).join('\n');
 }
 function pitchingCSV(pit) {
-  const head = ['Pitcher', 'Team', 'G', 'GS', 'W', 'L', 'SV', 'IP', 'BF', 'H', 'R', 'ER', 'BB', 'SO', 'HR', 'HBP', 'ERA', 'WHIP', 'K/9', 'BB/9'];
-  const rows = Object.values(pit).sort((a, b) => b.OUTS - a.OUTS).map(x => { const ip = x.OUTS / 3 || 0.0001; return [x.n, x.tm, x.G, x.GS, x.W, x.L, x.SV, ipStr(x.OUTS), x.BF, x.H, x.R, x.ER, x.BB, x.SO, x.HR, x.HBP, (x.ER * 9 / ip).toFixed(2), ((x.H + x.BB) / ip).toFixed(2), (x.SO * 9 / ip).toFixed(1), (x.BB * 9 / ip).toFixed(1)]; });
+  const head = ['Pitcher', 'Team', 'G', 'GS', 'W', 'L', 'SV', 'IP', 'BF', 'H', '2B', '3B', 'R', 'ER', 'BB', 'IBB', 'SO', 'HR', 'HBP', 'ERA', 'WHIP', 'K/9', 'BB/9', 'wOBA allowed', 'WPA'];
+  const rows = Object.values(pit).sort((a, b) => b.OUTS - a.OUTS).map(x => { const ip = x.OUTS / 3 || 0.0001; return [x.n, x.tm, x.G, x.GS, x.W, x.L, x.SV, ipStr(x.OUTS), x.BF, x.H, x.D || 0, x.T || 0, x.R, x.ER, x.BB, x.IBB || 0, x.SO, x.HR, x.HBP, (x.ER * 9 / ip).toFixed(2), ((x.H + x.BB) / ip).toFixed(2), (x.SO * 9 / ip).toFixed(1), (x.BB * 9 / ip).toFixed(1), f3(wobaPit(x)), (x.WPA || 0).toFixed(3)]; });
   return [head].concat(rows).map(r => r.map(csvEsc).join(',')).join('\n');
+}
+function pbpCSV(recs) {
+  const head = ['Game', 'Date', 'Type', 'Away', 'Home', 'Inning', 'Half', 'Batting', 'Batter', 'Pitcher', 'Outs before', 'Runners before', 'Result', 'Play', 'Away score', 'Home score', 'Home win exp before', 'Home win exp after', 'WPA (batting team)'];
+  const rows = [];
+  for (const r of recs) {
+    const sitN = (s) => !s ? 'empty' : s.split('').map(c => ({ 1: '1st', 2: '2nd', 3: '3rd' }[c])).join(' & ');
+    for (const e of r.pbp || []) {
+      const x = e[4] || {};
+      rows.push([r.id, r.date || '', r.label, r.box[0].abbr, r.box[1].abbr, e[0], e[1] === 0 ? 'Top' : 'Bottom', r.box[e[1]].abbr, x.t === 'SB' ? (x.run || x.b || '') : (x.b || ''), x.p || '', x.o != null ? x.o : '', x.t === 'SUB' ? '' : sitN(x.s), x.t === 'SUB' ? 'SUB' : (x.r || x.t || ''), e[2], x.sc ? x.sc[0] : '', x.sc ? x.sc[1] : '', f3(x.weB), f3(x.weA), x.wpa != null ? x.wpa.toFixed(3) : '']);
+    }
+  }
+  return [head].concat(rows).map(r => r.map(csvEsc).join(',')).join('\n');
+}
+function pbpText(r) {
+  const L = [`${r.box[0].name} ${r.score[0]}, ${r.box[1].name} ${r.score[1]}`, `${r.label}${r.date ? ' · ' + fmtDate(r.date) : ''} · ${r.park}`, '']; let key = null;
+  for (const [inn, half, d, uth, x] of r.pbp || []) {
+    const k = inn + '-' + half; if (k !== key) { key = k; L.push(`-- ${half === 0 ? 'Top' : 'Bottom'} ${B.ord(inn)} (${r.box[half].abbr} batting)`); }
+    if (d) L.push('  ' + d + (x && x.wpa != null ? `   [WPA ${wpaStr(x.wpa)}]` : ''));
+    if (uth) uth.forEach(u => L.push('      ' + u));
+  }
+  return L.join('\n');
 }
 let DL = undefined;
 async function offerFile(filename, data) {
@@ -619,7 +647,7 @@ function vGame() {
     <div class="gm-cards" id="cardsbox">${cardsHtml(g)}</div>
     <div class="gm-lower panel">
       <div class="ltabs" role="tablist">${tabs.map(([k, l, c]) => `<button role="tab" class="${c || ''}" aria-selected="${lt === k}" data-act="ltab" data-v="${k}">${l}</button>`).join('')}</div>
-      <div class="lbody">${lt === 'log' ? `<div class="row" style="justify-content:flex-end"><label class="chk"><input type="checkbox" ${st.showUth ? 'checked' : ''} data-act="uth"> Show chart lookups</label></div><div class="log ${st.showUth ? '' : 'hidden-uth'}">${logHtml(g)}</div>`
+      <div class="lbody">${lt === 'log' ? `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><button class="btn sm" data-act="game-pbp" data-v="txt">Export play-by-play (.txt)</button><button class="btn sm" data-act="game-pbp" data-v="csv">(.csv)</button></div><label class="chk"><input type="checkbox" ${st.showUth ? 'checked' : ''} data-act="uth"> Show chart lookups</label></div><div class="log ${st.showUth ? '' : 'hidden-uth'}">${logHtml(g)}</div>`
         : lt === 'cards' ? `<div class="cards2">${cardsHtml(g)}</div>`
         : lt === 'box' ? `<div class="row" style="justify-content:flex-end"><button class="btn sm" data-act="game-export">Export this game (.txt)</button></div><div class="scroll">${lineScore(g)}</div><div class="scroll" style="margin-top:12px">${boxScore(g)}</div>`
         : managePanel(g, GS)}</div>
@@ -1039,21 +1067,37 @@ function logHtml(g) {
     if (ev.type === 'SUB') { out += `<div class="ev sub">${esc(ev.desc)}</div>`; continue; }
     const uth = ev.lines.filter(l => !String(l[0]).startsWith('res')).map(l => `<div class="${l[0]}">${esc(l[1])}</div>`).join('');
     const sc = ev.runs ? ` <span class="tag">${esc(g.teams[0].abbr)} ${ev.scoreAfter[0]}, ${esc(g.teams[1].abbr)} ${ev.scoreAfter[1]}</span>` : '';
-    out += `<div class="ev ${ev.runs ? 'run' : ''} ${ev === latest ? 'new' : ''}"><div class="d">${esc(ev.desc || '')}${sc} <span class="muted" style="font-weight:400">${ev.outsAfter != null ? `· ${Math.min(3, ev.outsAfter)} out` : ''}</span></div><div class="uth">${uth}</div></div>`;
+    out += `<div class="ev ${ev.runs ? 'run' : ''} ${ev === latest ? 'new' : ''}"><div class="d">${esc(ev.desc || '')}${sc} <span class="muted" style="font-weight:400">${ev.outsAfter != null ? `· ${Math.min(3, ev.outsAfter)} out` : ''}${ev.wpa != null && Math.abs(ev.wpa) >= 0.005 ? ` · WPA ${wpaStr(ev.wpa)}` : ''}</span></div><div class="uth">${uth}</div></div>`;
   }
   return out || '<p class="muted">Press <b>Pitch</b> (or <b>Roll the dice</b>) to start.</p>';
 }
+function gameScope() {
+  const GS = st.game; if (!GS) return null; const k = GS.ctx.kind;
+  const stt = k === 'season' ? S : k === 'post' ? P : k === 'one' ? st.one : k === 'tour' ? st.tour : k === 'exh' ? st.exhSeries : null;
+  const label = { season: 'Season', post: 'Postseason', one: 'Series', tour: 'Tournament', exh: 'Series' }[k];
+  if (!stt || !stt.bat) return { label: 'Game', stt: null };
+  return { label, stt };
+}
+function scopeLine(kind, cid, cur, sc) {
+  const base = sc && sc.stt ? (kind === 'b' ? sc.stt.bat : sc.stt.pit)[cid] : null;
+  if (!base || (st.game && st.game.recorded)) return base && st.game && st.game.recorded ? base : cur;
+  const o = Object.assign({}, base);
+  for (const k of Object.keys(cur)) if (typeof cur[k] === 'number' && k !== 'cid' && k !== 'order') o[k] = (o[k] || 0) + cur[k];
+  return o;
+}
 function boxScore(g) {
+  const sc = gameScope() || { label: 'Game' };
+  const wl = sc.label === 'Game' ? 'wOBA' : `wOBA (${sc.label})`;
   return [0, 1].map(s => {
     const T = g.teams[s];
     const bats = Object.values(T.bat).sort((a, b) => (a.order - b.order) || ((a.sub ? 1 : 0) - (b.sub ? 1 : 0)));
-    const brow = (b) => `<tr><td class="l">${b.sub ? '&nbsp;&nbsp;' : ''}${esc(tn(b.cid))} <span class="muted">${b.pos}</span></td><td>${b.AB}</td><td>${b.R}</td><td>${b.H}</td><td>${b.RBI}</td><td>${b.BB}</td><td>${b.SO}</td><td>${b.D + b.T * 0 ? b.D : ''}${b.HR ? (b.D ? ', ' : '') + b.HR + ' HR' : ''}</td></tr>`;
-    const tot = bats.reduce((a, b) => { for (const k of ['AB', 'R', 'H', 'RBI', 'BB', 'SO']) a[k] += b[k]; return a; }, { AB: 0, R: 0, H: 0, RBI: 0, BB: 0, SO: 0 });
-    const prow = (cid) => { const p = T.pit[cid]; return `<tr><td class="l">${esc(tn(cid))}${p.dec ? ` <span class="tag ${p.dec === 'W' ? 'w' : ''}">${p.dec}</span>` : ''}</td><td>${ipStr(p.OUTS)}</td><td>${p.H}</td><td>${p.R}</td><td>${p.ER}</td><td>${p.BB}</td><td>${p.SO}</td><td>${p.HR}</td></tr>`; };
-    return `<h3 style="margin-top:${s ? 14 : 0}px">${esc(T.name)}</h3><table class="mini"><thead><tr><th class="l">Batter</th><th>AB</th><th>R</th><th>H</th><th>RBI</th><th>BB</th><th>K</th><th class="l" style="text-align:right">XBH</th></tr></thead><tbody>${bats.map(brow).join('')}
-      <tr><td class="l"><b>Totals</b></td><td>${tot.AB}</td><td>${tot.R}</td><td>${tot.H}</td><td>${tot.RBI}</td><td>${tot.BB}</td><td>${tot.SO}</td><td></td></tr></tbody></table>
-      <table class="mini" style="margin-top:6px"><thead><tr><th class="l">Pitcher</th><th>IP</th><th>H</th><th>R</th><th>ER</th><th>BB</th><th>K</th><th>HR</th></tr></thead><tbody>${T.pitOrder.map(prow).join('')}</tbody></table>`;
-  }).join('');
+    const brow = (b) => { const x = scopeLine('b', b.cid, b, sc); const w = wobaBat(x); return `<tr><td class="l">${b.sub ? '&nbsp;&nbsp;' : ''}${esc(tn(b.cid))} <span class="muted">${b.pos}</span></td><td>${b.AB}</td><td>${b.R}</td><td>${b.H}</td><td>${b.RBI}</td><td>${b.BB}</td><td>${b.SO}</td><td>${b.D ? b.D + ' 2B' : ''}${b.T ? (b.D ? ', ' : '') + b.T + ' 3B' : ''}${b.HR ? ((b.D || b.T) ? ', ' : '') + b.HR + ' HR' : ''}</td><td class="${(b.WPA || 0) >= 0 ? 'pos' : 'neg'}">${wpaStr(b.WPA || 0)}</td><td>${w == null ? '—' : avg3(w)}</td></tr>`; };
+    const tot = bats.reduce((a, b) => { for (const k of ['AB', 'R', 'H', 'RBI', 'BB', 'SO', 'WPA']) a[k] += b[k] || 0; return a; }, { AB: 0, R: 0, H: 0, RBI: 0, BB: 0, SO: 0, WPA: 0 });
+    const prow = (cid) => { const p = T.pit[cid]; const x = scopeLine('p', cid, p, sc); const w = wobaPit(x); return `<tr><td class="l">${esc(tn(cid))}${p.dec ? ` <span class="tag ${p.dec === 'W' ? 'w' : ''}">${p.dec}</span>` : ''}</td><td>${ipStr(p.OUTS)}</td><td>${p.H}</td><td>${p.R}</td><td>${p.ER}</td><td>${p.BB}</td><td>${p.SO}</td><td>${p.HR}</td><td class="${(p.WPA || 0) >= 0 ? 'pos' : 'neg'}">${wpaStr(p.WPA || 0)}</td><td>${w == null ? '—' : avg3(w)}</td></tr>`; };
+    return `<h3 style="margin-top:${s ? 14 : 0}px">${esc(T.name)}</h3><table class="mini"><thead><tr><th class="l">Batter</th><th>AB</th><th>R</th><th>H</th><th>RBI</th><th>BB</th><th>K</th><th>XBH</th><th>WPA</th><th>${wl}</th></tr></thead><tbody>${bats.map(brow).join('')}
+      <tr><td class="l"><b>Totals</b></td><td>${tot.AB}</td><td>${tot.R}</td><td>${tot.H}</td><td>${tot.RBI}</td><td>${tot.BB}</td><td>${tot.SO}</td><td></td><td>${wpaStr(tot.WPA)}</td><td></td></tr></tbody></table>
+      <table class="mini" style="margin-top:6px"><thead><tr><th class="l">Pitcher</th><th>IP</th><th>H</th><th>R</th><th>ER</th><th>BB</th><th>K</th><th>HR</th><th>WPA</th><th>${sc.label === 'Game' ? 'wOBA allowed' : `wOBA allowed (${sc.label})`}</th></tr></thead><tbody>${T.pitOrder.map(prow).join('')}</tbody></table>`;
+  }).join('') + `<p class="muted" style="font-size:12px;margin-top:8px">WPA is this game's win probability added, from a win-expectancy table built from Box Seat simulations. ${sc.label === 'Game' ? 'wOBA is for this game.' : `wOBA covers the whole ${sc.label.toLowerCase()} so far, including this game.`}</p>`;
 }
 
 // ---------- exhibition ----------
@@ -1336,10 +1380,10 @@ function vRecords() {
     <div class="row" style="align-items:end;margin-top:8px"><label class="fld">Games <select data-chg="rec-scope"><option value="all">All (${(st.recs || []).length})</option>${Object.keys(KINDN).map(k => `<option value="${k}" ${st.recScope === k ? 'selected' : ''}>${KINDN[k]} (${counts[k] || 0})</option>`).join('')}</select></label>
       <label class="fld">Team <select data-chg="rec-team"><option value="">All teams</option>${TEAMLIST().map(c => `<option value="${c}" ${st.recTeam === c ? 'selected' : ''}>${esc(tName(c))}</option>`).join('')}</select></label></div>
     <div class="row" style="margin-top:10px"><span class="eyebrow" style="width:100%">Export ${recs.length} game${recs.length === 1 ? '' : 's'}</span>
-      <button class="btn" data-act="rec-bulk" data-v="txt">Game logs &amp; box scores (.txt)</button><button class="btn" data-act="rec-bulk" data-v="bat">Batting stats (.csv)</button>
+      <button class="btn" data-act="rec-bulk" data-v="txt">Game logs &amp; box scores (.txt)</button><button class="btn" data-act="rec-bulk" data-v="pbp">Play-by-play (.csv)</button><button class="btn" data-act="rec-bulk" data-v="bat">Batting stats (.csv)</button>
       <button class="btn" data-act="rec-bulk" data-v="pit">Pitching stats (.csv)</button><button class="btn" data-act="rec-bulk" data-v="json">Full data (.json)</button></div></div>
     <div class="schedule">${recs.slice(0, lim).map(r => `<div class="gline rec"><span><span class="muted">${r.date ? fmtDate(r.date) + ' · ' : ''}${esc(r.label)}</span><br><b>${esc(r.box[0].abbr)} ${r.score[0]} @ ${esc(r.box[1].abbr)} ${r.score[1]}</b>${r.inn > 9 ? ` <span class="muted">(${r.inn})</span>` : ''}</span>
-      <span class="row" style="gap:6px"><button class="btn sm" data-act="rec-view" data-v="${esc(r.id)}">${st.recOpen === r.id ? 'Hide' : 'View'}</button><button class="btn sm" data-act="rec-export" data-v="${esc(r.id)}">Export</button></span>
+      <span class="row" style="gap:6px"><button class="btn sm" data-act="rec-view" data-v="${esc(r.id)}">${st.recOpen === r.id ? 'Hide' : 'View'}</button><button class="btn sm" data-act="rec-export" data-v="${esc(r.id)}">Export</button><button class="btn sm" data-act="rec-pbp" data-v="${esc(r.id)}">Play-by-play</button></span>
       ${st.recOpen === r.id ? `<pre class="gametext">${esc(gameText(r))}</pre>` : ''}</div>`).join('') || '<p class="muted">No games yet. Play or simulate a game and it will appear here.</p>'}
     ${recs.length > lim ? `<button class="btn" data-act="rec-more">Show more (${recs.length - lim} left)</button>` : ''}</div></div>`;
 }

@@ -48,8 +48,8 @@ function fieldRating(card, pos) {
 // ---------- Game creation ----------
 function makeRunner(cid, g, extra) { return Object.assign({ cid, resp: g.pitcherOf(1 - g.half), unearned: false }, extra || {}); }
 
-function newBatLine(cid, pos) { return { cid, pos, AB: 0, R: 0, H: 0, D: 0, T: 0, HR: 0, RBI: 0, BB: 0, SO: 0, HBP: 0, SB: 0, CS: 0, SF: 0, SH: 0, GDP: 0, E: 0, PA: 0 }; }
-function newPitLine(cid) { return { cid, OUTS: 0, BF: 0, H: 0, R: 0, ER: 0, BB: 0, SO: 0, HR: 0, HBP: 0, WP: 0, BK: 0, IBB: 0, dec: '' }; }
+function newBatLine(cid, pos) { return { cid, pos, WPA: 0, IBB: 0, AB: 0, R: 0, H: 0, D: 0, T: 0, HR: 0, RBI: 0, BB: 0, SO: 0, HBP: 0, SB: 0, CS: 0, SF: 0, SH: 0, GDP: 0, E: 0, PA: 0 }; }
+function newPitLine(cid) { return { cid, WPA: 0, D: 0, T: 0, SF: 0, SH: 0, OUTS: 0, BF: 0, H: 0, R: 0, ER: 0, BB: 0, SO: 0, HR: 0, HBP: 0, WP: 0, BK: 0, IBB: 0, dec: '' }; }
 
 class Game {
   constructor(D, setup) {
@@ -255,6 +255,7 @@ class Game {
     const bcid = this.batterCid(), bc = this.batterCard(), pc = this.card(D.pitcher);
     const h = this.hands(bc, pc);
     const cur = this.cur = { type: 'PA', inning: this.inning, half: this.half, batter: bcid, pitcher: D.pitcher, lines: [], outsBefore: this.outs, sitBefore: this.sitKey(), scoreBefore: this.score.slice(), runs: 0, dec };
+    cur.weB = this.weNow();
     this.hr = h; this.bc = bc; this.pc = pc;
     const bl = T.bat[bcid] || (T.bat[bcid] = newBatLine(bcid, '?'));
     const pl = D.pit[D.pitcher];
@@ -264,7 +265,7 @@ class Game {
     let res;
     if (dec.ibb) {
       this.say(`Intentional walk to ${this.name(bcid)}`, 'hd');
-      pl.IBB++;
+      pl.IBB++; bl.IBB++;
       res = this.doWalk(cur, true);
     } else if (dec.bunt || dec.squeeze) {
       res = this.doBunt(cur, !!dec.squeeze);
@@ -291,12 +292,28 @@ class Game {
     cur.scoreAfter = this.score.slice(); cur.outsAfter = this.outs; cur.sitAfter = this.sitKey();
     this.plays.push(cur);
     this.log.push(cur);
-    if (this.walkoff) { this.finish(); return; }
-    if (this.outs >= 3) {
+    if (this.walkoff) { this.finish(); }
+    else if (this.outs >= 3) {
       this.say(`${this.outs > 3 ? 3 : 3} outs — end of ${this.half === 0 ? 'top' : 'bottom'} ${ord(this.inning)}.`, 'end');
       this.outs = 3;
       this.endHalf();
     }
+    this.applyWPA(cur);
+  }
+  weNow() {
+    const W = G.BSB_WE; if (!W) return null;
+    return W({ inning: this.inning, half: this.half, outs: Math.min(2, this.outs), bases: this.bases.map(Boolean), diff: this.score[1] - this.score[0], over: this.over, winner: this.winner, auto: this.opts.autoRunner && !this.isPost });
+  }
+  applyWPA(cur) {
+    if (cur.weB == null) return;
+    const a = this.weNow(); if (a == null) return;
+    cur.weA = a;
+    const off = cur.half; const delta = off === 1 ? a - cur.weB : cur.weB - a;
+    cur.wpa = delta;
+    const T = this.teams[off], Dt = this.teams[1 - off];
+    const who = cur.type === 'SB' ? cur.runner : cur.batter;
+    if (who != null && T.bat[who]) T.bat[who].WPA += delta;
+    if (cur.pitcher != null && Dt.pit[cur.pitcher]) Dt.pit[cur.pitcher].WPA -= delta;
   }
 
   // ---------- token resolution ----------
@@ -627,7 +644,7 @@ class Game {
     const res = this.applyMoves(moves, cur, { rbi: true, errExtra, batterRunner: makeRunner(bcid, this), unearnedOnErr: errExtra > 0 });
     bl.AB++; bl.H++; pl.H++; this.hits[this.half]++;
     const hitType = outAt2 ? 'SN' : (kind === 'TP' ? 'TP' : bases === 2 ? 'DB' : 'SN');
-    if (hitType === 'DB') bl.D++; if (hitType === 'TP') bl.T++;
+    if (hitType === 'DB') { bl.D++; pl.D++; } if (hitType === 'TP') { bl.T++; pl.T++; }
     this.fatigueAdj(-1); this.inningStats.hbb++;
     const hn = { SN: 'singles', DB: 'doubles', TP: 'triples' }[hitType];
     let txt = `${this.name(bcid)} ${hn}${o.dn && hitType === kind ? ' ' + o.dn : ''} to ${posName(fld)}`;
@@ -1003,7 +1020,7 @@ class Game {
     }
     if (this.outs < 3 && adv && kind !== 'SF') {
       const res = this.flyAdvance(kind, fld, adv, cur);
-      if (res.sf) { bl.AB--; bl.SF++; }
+      if (res.sf) { bl.AB--; bl.SF++; this.def.pit[this.def.pitcher].SF++; }
       txt += res.text;
     }
     cur.desc = txt; cur.result = 'F' + kind;
@@ -1600,7 +1617,7 @@ class Game {
     }
     if (!moves.find(m => m[0] === 'B')) moves.push(['B', batterOut ? 'out' : 0]);
     moves = moves.filter(m => m[1] !== 'stay');
-    if (sac) bl.SH++; else if (!cur.noAdvanceBatter) bl.AB++;
+    if (sac) { bl.SH++; this.def.pit[this.def.pitcher].SH++; } else if (!cur.noAdvanceBatter) bl.AB++;
     if (d.r === 0 && this.errorCheck(fld === 'C' ? 'POP' : 'GB', fld)) {
       moves = sacAll(); moves.push(['B', 0]); txt += ` — but ${fld} commits an error, everyone safe`;
       if (sac) { bl.SH--; bl.AB++; }
@@ -1635,7 +1652,8 @@ class Game {
   // ======================================================
   stealEvent(fromIdx, opts) {
     opts = opts || {};
-    const cur = this.cur = { type: 'SB', inning: this.inning, half: this.half, lines: [], outsBefore: this.outs, sitBefore: this.sitKey(), scoreBefore: this.score.slice(), runs: 0, batter: this.batterCid(), pitcher: this.def.pitcher };
+    const cur = this.cur = { type: 'SB', inning: this.inning, half: this.half, lines: [], outsBefore: this.outs, sitBefore: this.sitKey(), scoreBefore: this.score.slice(), runs: 0, batter: this.batterCid(), pitcher: this.def.pitcher, runner: this.bases[fromIdx] ? this.bases[fromIdx].cid : null };
+    cur.weB = this.weNow();
     this.pc = this.card(this.def.pitcher);
     this.stealAttempt(fromIdx, cur, 0, opts);
     cur.noAdvanceBatter = true;

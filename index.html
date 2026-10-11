@@ -8,7 +8,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}td.pos { color: var(--felt) } td.neg { color: var(--hit) }
+</style>
 <title>Box Seat Baseball Table</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -312,6 +313,7 @@ tr.po td { background: color-mix(in srgb, var(--felt) 10%, transparent) !importa
 <script src="engine.js" charset="utf-8"></script>
 <script src="wild.js" charset="utf-8"></script>
 <script src="ai.js" charset="utf-8"></script>
+<script src="we.js" charset="utf-8"></script>
 <script src="app.js" charset="utf-8"></script>
 
 <script>if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));</script>
