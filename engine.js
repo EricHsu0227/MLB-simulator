@@ -287,6 +287,7 @@ class Game {
     return cur;
   }
   finishPlay(cur) {
+    if (cur.preDesc && cur.desc && !cur.desc.startsWith(cur.preDesc)) { cur.desc = cur.preDesc + ' ' + cur.desc; }
     cur.scoreAfter = this.score.slice(); cur.outsAfter = this.outs; cur.sitAfter = this.sitKey();
     this.plays.push(cur);
     this.log.push(cur);
@@ -1480,7 +1481,8 @@ class Game {
         const moves = []; for (let i = 2; i >= 0; i--) if (this.bases[i]) moves.push([i, i + 1]);
         if (this.hitRun) { const lead = [2, 1, 0].find(i => this.bases[i]); const br = this.effBR(this.bases[lead]); const need = { 'A+': 0, A: 2, B: 5, C: 6 }[br]; if (need != null && this.d10() >= need) { const i = moves.findIndex(m => m[0] === lead); moves[i] = [lead, Math.min(3, lead + 2)]; } }
         const res = this.applyMoves(moves, cur, { rbi: false });
-        this.say(`${isWP ? 'Wild pitch' : 'Passed ball'}!${res.text}`, 'res');
+        this.say(`${isWP ? 'Wild pitch' : 'Passed ball'}!${res.text}`, 'wp');
+        cur.preDesc = `${isWP ? 'Wild pitch' : 'Passed ball'}${res.text.replace(/^\./, ' —')}; then`;
         cur.wp = isWP ? 'WP' : 'PB';
         if (this.over || this.walkoff) return cur;
       }
