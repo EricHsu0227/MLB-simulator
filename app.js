@@ -5,8 +5,10 @@ const $ = (s, el) => (el || document).querySelector(s);
 const main = $('#main');
 let D = null;
 const SEASONS = Array.from({ length: 17 }, (_, i) => 2010 + i);
-const SEASON = (() => { try { const v = +localStorage.getItem('bsb-yr'); return SEASONS.includes(v) ? v : 2025; } catch (e) { return 2025; } })();
-const skey = (k) => (SEASON === 2025 || k === 'bsb-prefs') ? k : k + '-' + SEASON;
+const SEASON = (() => { try { const r = localStorage.getItem('bsb-yr'); if (r === 'mix') return 0; const v = +r; return SEASONS.includes(v) ? v : 2025; } catch (e) { return 2025; } })();
+const MIX = SEASON === 0;  // all seasons: clubs from different years can meet
+const YR0 = MIX ? 2025 : SEASON;
+const skey = (k) => (SEASON === 2025 || k === 'bsb-prefs') ? k : k + '-' + (MIX ? 'mix' : SEASON);
 const st = { prefs: null, tab: 'home', game: null, showUth: true, histFilter: { team: '', type: '', q: '' }, cardsTeam: 'NYA', exh: { away: 'LAN', home: 'NYA', n: 1, user: 'home', asPlayed: false }, seasonView: 'standings', leaderLg: 'AL' };
 const store = {
   get(k) { try { const v = localStorage.getItem(skey(k)); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
@@ -16,7 +18,7 @@ const store = {
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tn = (cid) => cid == null ? '—' : B.titleName(D.cards[cid].n);
 const team = (c) => D.teams[c];
-const tName = (c) => (c === 'ATH' && SEASON >= 2025) ? 'Athletics' : team(c).city + ' ' + team(c).nick;
+const tName = (c) => { const t = team(c); if (MIX) return t.yr + ' ' + ((t.code === 'ATH' && t.yr >= 2025) ? 'Athletics' : t.city + ' ' + t.nick); return (c === 'ATH' && SEASON >= 2025) ? 'Athletics' : t.city + ' ' + t.nick; };
 const fmtDate = (d) => { const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+d.slice(4, 6) - 1]; return `${m} ${+d.slice(6, 8)}, ${d.slice(0, 4)}`; };
 const dayNum = (d) => Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8)) / 864e5;
 const avg3 = (x) => isFinite(x) ? x.toFixed(3).replace(/^0/, '') : '.000';
@@ -33,22 +35,74 @@ st.prefs = Object.assign({ fatigue: 'L2H', bpEffects: true, wildPlays: true, aut
 document.addEventListener('keydown', e => { if (st.tab === 'game' && (e.code === 'Space' || e.key === 'Enter') && !/INPUT|SELECT|BUTTON|TEXTAREA/.test((e.target.tagName || ''))) { e.preventDefault(); playStep(); } });
 (function seasonPicker() {
   const sel = document.getElementById('season'); const lbl = document.getElementById('yrlbl');
-  if (lbl) lbl.textContent = SEASON;
-  document.title = 'Box Seat Baseball ' + SEASON;
+  if (lbl) lbl.textContent = MIX ? 'All seasons' : SEASON;
+  document.title = 'Box Seat Baseball ' + (MIX ? 'All seasons' : SEASON);
   if (!sel) return;
-  sel.innerHTML = SEASONS.slice().reverse().map(y => `<option value="${y}"${y === SEASON ? ' selected' : ''}>${y}${y === 2025 ? ' (official set)' : ''}</option>`).join('');
+  sel.innerHTML = `<option value="mix"${MIX ? ' selected' : ''}>All seasons (mix)</option>` + SEASONS.slice().reverse().map(y => `<option value="${y}"${y === SEASON ? ' selected' : ''}>${y}${y === 2025 ? ' (official set)' : ''}</option>`).join('');
   sel.addEventListener('change', () => { try { localStorage.setItem('bsb-yr', sel.value); } catch (e) {} location.reload(); });
 })();
-fetch(SEASON === 2025 ? 'bsb.json' : `seasons/bsb-${SEASON}.json`).then(r => r.json()).then(d => { D = d; if (D.seeds) REAL_SEEDS = D.seeds; D.gamesById = {}; D.games.forEach(g => D.gamesById[g.id] = g); loadState(); render(); })
+(MIX ? mixBoot() : fetch(SEASON === 2025 ? 'bsb.json' : `seasons/bsb-${SEASON}.json`).then(r => r.json()).then(d => { D = d; if (D.seeds) REAL_SEEDS = D.seeds; D.gamesById = {}; D.games.forEach(g => D.gamesById[g.id] = g); loadState(); render(); }))
   .catch(e => { main.innerHTML = `<div class="loading">Couldn't load the card data (${esc(e.message)}). Reload the page to try again.</div>`; });
 
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) { st.tab = b.dataset.tab; render(); window.scrollTo(0, 0); } });
 main.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (el && !el.disabled) act(el.dataset.act, el, e); });
 main.addEventListener('change', e => { const el = e.target.closest('[data-chg]'); if (el) chg(el.dataset.chg, el); });
 
+// ======================================================
+// all-seasons mode: load each season's cards only when a club from it is needed.
+// Card ids are offset by year so saved tournaments keep pointing at the same cards.
+// ======================================================
+const MIX_BASE = (yr) => (yr - 2009) * 5000;
+const MIX_LOADED = {}, MIX_PENDING = {};
+let MIX_IDX = null;
+function mixBoot() {
+  ['home', 'season', 'post', 'hist'].forEach(t => { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.style.display = 'none'; });
+  st.tab = 'tour';
+  return fetch('seasons/index.json').then(r => r.json()).then(ix => {
+    MIX_IDX = ix;
+    D = { teams: {}, cards: [], parks: {}, gen: [], games: [], gamesById: {}, r2c: {}, pnames: {} };
+    Object.entries(ix.teams).forEach(([k, t]) => { D.teams[k] = Object.assign({ bat: [], pit: [], luL: [], luR: [], rot: [], pen: [], stub: true }, t); });
+    loadState();
+    if (!D.teams[st.cardsTeam]) st.cardsTeam = '2025-NYA';
+    if (!D.teams[st.exh.away]) { st.exh.away = '2016-CHN'; st.exh.home = '2025-LAN'; }
+    return mixEnsure(mixNeeded());
+  }).then(render);
+}
+function mixNeeded() {
+  const k = [st.cardsTeam, st.exh.away, st.exh.home];
+  if (st.tour) k.push(...st.tour.teams);
+  if (st.exhSeries) k.push(st.exhSeries.hi, st.exhSeries.lo);
+  if (st.game && st.game.setup) k.push(st.game.setup.away, st.game.setup.home);
+  return k.filter(Boolean);
+}
+function mixLoadYear(yr) {
+  if (MIX_LOADED[yr]) return Promise.resolve();
+  if (MIX_PENDING[yr]) return MIX_PENDING[yr];
+  return MIX_PENDING[yr] = fetch(yr === 2025 ? 'bsb.json' : `seasons/bsb-${yr}.json`).then(r => r.json()).then(d => {
+    const off = MIX_BASE(yr), id = (x) => x + off;
+    d.cards.forEach((c, i) => { const cc = Object.assign({}, c, { tm: yr + '-' + c.tm, yr }); D.cards[off + i] = cc; });
+    Object.entries(d.teams).forEach(([code, t]) => {
+      const key = yr + '-' + code;
+      D.teams[key] = Object.assign({}, t, MIX_IDX.teams[key] || {}, { code: key, bat: t.bat.map(id), pit: t.pit.map(id), luL: t.luL.map(([c, p]) => [id(c), p]), luR: t.luR.map(([c, p]) => [id(c), p]),
+        rot: t.rot.map(id), pen: t.pen.map(id), stub: false, yr, realCode: code });
+      if (d.parks[code]) D.parks[key] = d.parks[code];
+    });
+    if (!D.gen.length) D.gen = d.gen.map(id);
+    MIX_LOADED[yr] = true;
+  });
+}
+function mixEnsure(keys) {
+  if (!MIX) return Promise.resolve();
+  const yrs = [...new Set(keys.filter(k => D.teams[k]).map(k => D.teams[k].yr))].filter(y => !MIX_LOADED[y]);
+  if (!yrs.length) return Promise.resolve();
+  main.innerHTML = `<div class="loading">Loading the ${yrs.sort().join(', ')} card set${yrs.length > 1 ? 's' : ''}…</div>`;
+  return yrs.reduce((p, y) => p.then(() => mixLoadYear(y)), Promise.resolve());
+}
+
 function render() {
   document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === st.tab ? 'true' : 'false'));
   if (!D) return;
+  if (MIX) { const need = mixNeeded().filter(k => D.teams[k] && D.teams[k].stub); if (need.length) { mixEnsure(need).then(render); return; } }
   const v = { tour: vTour, records: vRecords, home: vHome, game: vGame, season: vSeason, post: vPost, exh: vExh, hist: vHist, cards: vCards, rules: vRules }[st.tab] || vHome;
   main.innerHTML = v();
   if (st.game && !st.game.busy) saveLive();
@@ -260,12 +314,13 @@ function act(a, el) {
     case 'style': { const side = +el.dataset.side; g.teams[side].style = $('#stylesel').value; render(); return; }
     // ----- exhibition -----
     case 'exh-start': {
+      if (MIX && [$('#exaway').value, $('#exhome').value].some(k => D.teams[k].stub)) { st.exh.away = $('#exaway').value; st.exh.home = $('#exhome').value; mixEnsure([st.exh.away, st.exh.home]).then(() => { render(); act('exh-start', el); }); return; }
       const x = st.exh; x.away = $('#exaway').value; x.home = $('#exhome').value; x.n = +$('#exn').value; x.user = $('#exuser').value;
       if (x.away === x.home) { toast('Pick two different teams.'); return; }
       const opts = readOpts();
       st.exhSeries = { id: 'x', hi: x.home, lo: x.away, best: x.n, fixed: $('#exfmt').value === 'fixed', wins: { [x.home]: 0, [x.away]: 0 }, games: [], round: 'EXH', opts, user: x.user, tired: {} };
       store.set('bsb-exh', x.n === 1 ? null : st.exhSeries);
-      if (x.n === 1) { st.exhSeries = null; startGame({ away: x.away, home: x.home, date: SEASON + '0715', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, opts }, { kind: 'exh', user: x.user }); return; }
+      if (x.n === 1) { st.exhSeries = null; startGame({ away: x.away, home: x.home, date: YR0 + '0715', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, opts }, { kind: 'exh', user: x.user }); return; }
       render(); return;
     }
     case 'exh-next': { const s = st.exhSeries; const gs = seriesGameSetup(s, null); startGame(gs.setup, { kind: 'exh', user: s.user, sid: 'x' }); return; }
@@ -300,12 +355,17 @@ function act(a, el) {
     case 'post-simall': { let guard = 0; while (!P.champ && guard++ < 10) { P.series.filter(s => s.round === P.round && s.hi && s.lo).forEach(s => { let k = 0; while (!seriesOver(s) && k++ < 10) simSeriesGame(s, P); }); advancePost(P); } savePost(); render(); return; }
     // ----- tournaments -----
     case 'tpick': { const sel = st.tourPick = st.tourPick || []; const i = sel.indexOf(v); if (i >= 0) sel.splice(i, 1); else sel.push(v); st.tourName = ($('#tname') || {}).value || st.tourName; render(); return; }
-    case 'tq': { const all = TEAMLIST(); st.tourName = ($('#tname') || {}).value || st.tourName;
+    case 'tq': { const all = MIX ? TEAMLIST().filter(c => D.teams[c].yr === (st.tourYr || 2025)) : TEAMLIST(); st.tourName = ($('#tname') || {}).value || st.tourName;
+      if (MIX) { const yr = st.tourYr || 2025; const keep = (st.tourPick || []).filter(c => D.teams[c].yr !== yr);
+        const pick = v === 'NONE' ? [] : v === 'ALL' ? all : v === 'P25' ? MIX_IDX.seeds[yr] : all.filter(c => D.teams[c].lg === v);
+        st.tourPick = v === 'NONE' ? [] : keep.concat(pick); render(); return; }
       st.tourPick = v === 'NONE' ? [] : v === 'ALL' ? all.slice() : v === 'P25' ? REAL_SEEDS.AL.concat(REAL_SEEDS.NL) : all.filter(c => D.teams[c].lg === v); render(); return; }
     case 'tour-new': {
+      if (MIX && (st.tourPick || []).some(k => D.teams[k].stub)) { const keep = { n: $('#tname').value, f: $('#tfmt').value, s: $('#tseed').value, p: $('#tpo').value, r: $('#trr').value, b: $('#tbest').value, fi: $('#tfinal').value, m: $('#tmy').value };
+        mixEnsure(st.tourPick).then(() => { render(); $('#tname').value = keep.n; $('#tfmt').value = keep.f; $('#tseed').value = keep.s; $('#tpo').value = keep.p; $('#trr').value = keep.r; $('#tbest').value = keep.b; $('#tfinal').value = keep.fi; $('#tmy').value = keep.m; act('tour-new', el); }); return; }
       let teams = (st.tourPick || []).slice(); const fmt = $('#tfmt').value; const seed = $('#tseed').value;
       const w25 = { TOR: 94, SEA: 90, CLE: 88, NYA: 94, BOS: 89, DET: 87, MIL: 97, PHI: 96, LAN: 93, CHN: 92, SDN: 90, CIN: 83 };
-      const realW = (c) => { const gs = D.games.filter(g => g.ty === 'r' && (g.v === c || g.h === c)); return gs.filter(g => (g.v === c) === (g.sc[0] > g.sc[1])).length; };
+      const realW = (c) => { if (MIX) return D.teams[c].W || 0; const gs = D.games.filter(g => g.ty === 'r' && (g.v === c || g.h === c)); return gs.filter(g => (g.v === c) === (g.sc[0] > g.sc[1])).length; };
       if (seed === 'record' || fmt !== 'bracket') teams.sort((a, b) => realW(b) - realW(a));
       if (seed === 'random') for (let i = teams.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [teams[i], teams[j]] = [teams[j], teams[i]]; }
       const poSize = Math.min(+$('#tpo').value, teams.length);
@@ -357,6 +417,7 @@ function chg(k, el) {
   if (k === 'hist-type') { st.histFilter.type = el.value; render(); }
   if (k === 'hist-date') { st.histFilter.date = el.value.replace(/-/g, ''); render(); }
   if (k === 'cards-team') { st.cardsTeam = el.value; render(); }
+  if (k === 'tour-yr') { st.tourName = ($('#tname') || {}).value || st.tourName; st.tourYr = +el.value; render(); }
   if (k === 'pref') { st.prefs[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value; store.set('bsb-prefs', st.prefs); }
   if (k === 'stepmode') { st.prefs.stepMode = el.checked; store.set('bsb-prefs', st.prefs); if (st.game && !st.game.busy) render(); }
   if (k === 'speed') { st.prefs.speed = el.value; store.set('bsb-prefs', st.prefs); }
@@ -552,7 +613,7 @@ function seriesGameSetup(s, P) {
   [home, away].forEach(c => { if (stt.rot[c] == null) stt.rot[c] = 0; });
   const day = 100 + k * 1 + (ROUNDS.indexOf(s.round) + 1) * 10;
   const sp = asPlayed ? null : [pickStarter(stt, away, day), pickStarter(stt, home, day)];
-  const setup = { away, home, date: ref ? ref.d : SEASON + '1005', dn: ref ? (ref.dn === 'd' ? 'D' : 'N') : 'N', gameRef: asPlayed ? ref : null, asPlayed, seed: (Math.random() * 2 ** 31) | 0,
+  const setup = { away, home, date: ref ? ref.d : YR0 + '1005', dn: ref ? (ref.dn === 'd' ? 'D' : 'N') : 'N', gameRef: asPlayed ? ref : null, asPlayed, seed: (Math.random() * 2 ** 31) | 0,
     weatherMode: asPlayed ? 'actual' : 'roll', sp, isPost: s.round !== 'EXH', tired: [tiredSet(stt, away, day), tiredSet(stt, home, day)], opts: s.opts || (P && P.opts) || readOpts() };
   return { setup, homeIsHi: home === s.hi, day };
 }
@@ -1043,7 +1104,7 @@ function batterCard(c, focus, cell, note) {
   const T = D.teams[c.tm];
   const pos = (c.pos || []).join('/');
   return `<div class="card"><div class="hd"><span class="nm">${esc(c.n)}</span><span style="font-weight:700">B/${{ R: 'Right', L: 'Left', B: 'Both' }[c.b]} [${c.tend}]</span></div>
-    <div class="meta"><span>${pos}</span>${c.F && c.F.length ? `<span>F${c.arm ? '(Arm)' : ''}: ${c.F.join('/')}${c.arm ? '(' + c.arm + ')' : ''}</span>` : ''}${c.E && c.E.length ? `<span>E: ${c.E.join('/')}</span>` : ''}${c.DP != null ? `<span>DP: ${c.DP}</span>` : ''}<span class="tm">${T ? SEASON + ' ' + esc(T.nick) : (note || 'Generic')}</span></div>
+    <div class="meta"><span>${pos}</span>${c.F && c.F.length ? `<span>F${c.arm ? '(Arm)' : ''}: ${c.F.join('/')}${c.arm ? '(' + c.arm + ')' : ''}</span>` : ''}${c.E && c.E.length ? `<span>E: ${c.E.join('/')}</span>` : ''}${c.DP != null ? `<span>DP: ${c.DP}</span>` : ''}<span class="tm">${T ? (T.yr || SEASON) + ' ' + esc(T.nick) : (note || 'Generic')}</span></div>
     <div class="meta"><span>B/R: ${c.BR}</span><span>SB/R: ${c.SBR}</span><span>SBF: ${c.SBF}</span></div>
     <div class="vs">${vs('L', 'LEFT')}${vs('R', 'RIGHT')}</div><div class="cgrid">${cols}</div></div>`;
 }
@@ -1061,7 +1122,7 @@ function pitcherCard(c, pcell, fat) {
   }
   const T = D.teams[c.tm];
   return `<div class="card"><div class="hd"><span class="nm">${esc(c.n)}</span><span style="font-weight:700">T/${c.th === 'L' ? 'Left' : 'Right'} [${c.tend}]</span></div>
-    <div class="meta"><span>P · E: ${c.E}</span><span>Bats: ${c.b}</span><span>Hit: ${c.hc}</span><span class="tm">${SEASON} ${T ? esc(T.nick) : ''}</span></div>
+    <div class="meta"><span>P · E: ${c.E}</span><span>Bats: ${c.b}</span><span>Hit: ${c.hc}</span><span class="tm">${T && T.yr ? T.yr : SEASON} ${T ? esc(T.nick) : ''}</span></div>
     <div class="meta"><span>G ${c.G} GS ${c.GS} IP ${c.IP}</span><span>ERA ${c.ERA}</span><span>W/L ${c.W}-${c.Lo}</span><span>SV ${c.SV}</span></div>
     <div class="meta"><span>L1 Ftg ${c.F1}</span><span>L2 Ftg ${c.F2}${fat != null ? ` (now ${fat.toFixed(1)})` : ''}</span><span>SBR ${c.SBR}</span><span>SBF ${c.SBF}</span></div>
     <div class="meta"><span>Early ${c.early}</span><span>Late ${c.late}</span><span>WP ${c.WP}</span><span>PO/BK ${c.PO}</span><span>HBP ${c.HBP}</span><span>HR vs L ${B.fmtS(c.HRL)} · vs R ${B.fmtS(c.HRR)}</span></div>
@@ -1122,7 +1183,7 @@ function vExh() {
       <div class="schedule">${s.games.map((g, i) => `<div class="gline"><span>Game ${i + 1}: ${team(g.v).abbr} ${g.sc[0]} @ ${team(g.h).abbr} ${g.sc[1]}</span><span class="tag ${''}">${team(g.w).abbr} win</span><span></span></div>`).join('')}</div>
       <div class="row" style="margin-top:10px">${!over ? `<button class="btn go" data-act="exh-next">Play game ${s.games.length + 1}</button><button class="btn" data-act="exh-sim">Sim game ${s.games.length + 1}</button><button class="btn" data-act="exh-simall">Sim the rest</button>` : ''}<button class="btn" data-act="exh-reset">New matchup</button></div></div>`;
   }
-  return `<div class="section"><div class="panel"><h2>Exhibition</h2><p class="muted">Lineups come from each club's most-used ${SEASON} lineup against the opposing starter's hand. Starters rotate through the five most-used ${SEASON} starters, and relievers tire across a series.</p>
+  return `<div class="section"><div class="panel"><h2>Exhibition</h2><p class="muted">Lineups come from each club's most-used ${MIX ? 'season' : SEASON} lineup against the opposing starter's hand. Starters rotate through the five most-used ${SEASON} starters, and relievers tire across a series.</p>
     <div class="row" style="margin-top:10px;align-items:end"><label class="fld">Visitors ${teamSelect('exaway', x.away)}</label><label class="fld">Home ${teamSelect('exhome', x.home)}</label>
     <label class="fld">Games <select id="exn">${[1, 3, 4, 5, 7].map(n => `<option ${n === x.n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
     <label class="fld">Format <select id="exfmt"><option value="best">Best of</option><option value="fixed">Play all games</option></select></label>
@@ -1296,7 +1357,7 @@ function tourAdvance(t) {
 function tourGameSetup(t, v, h, day) {
   t.plog = t.plog || {};
   const sp = [pickStarter(t, v, day), pickStarter(t, h, day)];
-  return { away: v, home: h, date: SEASON + '0801', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, sp, tired: [tiredSet(t, v, day), tiredSet(t, h, day)], opts: t.opts, isPost: false };
+  return { away: v, home: h, date: YR0 + '0801', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, sp, tired: [tiredSet(t, v, day), tiredSet(t, h, day)], opts: t.opts, isPost: false };
 }
 function tourUser(t, v, h) { const m = t.myTeam; if (m === 'all') return 'both'; if (m === v) return 'away'; if (m === h) return 'home'; return 'none'; }
 function tourNextRR(t) { return t.rr.findIndex(x => !x.sc); }
@@ -1330,18 +1391,24 @@ function vTour() {
   const t = st.tour;
   if (!t) {
     const sel = st.tourPick || [];
-    const quick = [['AL', 'American League'], ['NL', 'National League'], ['P25', SEASON + ' playoff teams'], ['ALL', 'All 30'], ['NONE', 'Clear']];
-    return `<div class="section"><div class="panel"><h2>Custom tournament</h2><p class="muted">Pick any ${SEASON} clubs and a format. Round-robin games rotate starters with rest days, and playoff series follow 2-2-1 (five games) or 2-3-2 (seven games) home field for the higher seed.</p>
+    const yr = st.tourYr || 2025;
+    const quick = MIX ? [['AL', yr + ' AL'], ['NL', yr + ' NL'], ['P25', yr + ' playoff teams'], ['ALL', 'All 30 of ' + yr], ['NONE', 'Clear all']]
+      : [['AL', 'American League'], ['NL', 'National League'], ['P25', SEASON + ' playoff teams'], ['ALL', 'All 30'], ['NONE', 'Clear']];
+    const shown = MIX ? TEAMLIST().filter(c => D.teams[c].yr === yr) : TEAMLIST();
+    const recOf = (c) => MIX ? ` <span class="muted">${D.teams[c].W}-${D.teams[c].L}</span>` : '';
+    const yrSel = MIX ? `<label class="fld">Show season <select data-chg="tour-yr">${MIX_IDX.yrs.slice().reverse().map(y => `<option ${y === yr ? 'selected' : ''}>${y}</option>`).join('')}</select></label>` : '';
+    const pickedList = MIX && sel.length ? `<p class="muted" style="margin:6px 0 0">Picked: ${sel.map((c, i) => `<b>${i + 1}</b> ${esc(tName(c))}`).join(' · ')}</p>` : '';
+    return `<div class="section"><div class="panel"><h2>Custom tournament</h2><p class="muted">${MIX ? 'Pick clubs from any season, 2010 to 2026 — a 2016 Cubs vs 2019 Nationals final is fair game —' : 'Pick any ' + SEASON + ' clubs'} and a format. Round-robin games rotate starters with rest days, and playoff series follow 2-2-1 (five games) or 2-3-2 (seven games) home field for the higher seed.</p>
       <div class="row" style="align-items:end;margin-top:10px"><label class="fld">Name <input type="text" id="tname" value="${esc(st.tourName || 'Box Seat Invitational')}"></label>
         <label class="fld">Format <select id="tfmt"><option value="bracket">Bracket (knockout series)</option><option value="rrpo">Round robin, then playoffs</option><option value="rr">Round robin only</option></select></label>
         <label class="fld">Round-robin meetings <select id="trr">${[1, 2, 3, 4, 6].map(n => `<option ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
         <label class="fld">Playoff teams <select id="tpo">${[2, 4, 6, 8, 12, 16].map(n => `<option ${n === 4 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
         <label class="fld">Series length <select id="tbest">${[1, 3, 5, 7].map(n => `<option value="${n}" ${n === 5 ? 'selected' : ''}>Best of ${n}</option>`).join('')}</select></label>
         <label class="fld">Final <select id="tfinal">${[1, 3, 5, 7].map(n => `<option value="${n}" ${n === 7 ? 'selected' : ''}>Best of ${n}</option>`).join('')}</select></label>
-        <label class="fld">Seeding (bracket) <select id="tseed"><option value="pick">Order picked</option><option value="record">${SEASON} record</option><option value="random">Random draw</option></select></label>
-        <label class="fld">You manage <select id="tmy"><option value="none">Nobody (watch)</option><option value="all">Every game, both sides</option>${TEAMLIST().map(c => `<option value="${c}">${esc(tName(c))}</option>`).join('')}</select></label></div>
-      <div class="row" style="margin-top:12px"><span class="eyebrow">Teams (${sel.length} picked)</span>${quick.map(([k, l]) => `<button class="btn sm" data-act="tq" data-v="${k}">${l}</button>`).join('')}</div>
-      <div class="tpick">${TEAMLIST().map(c => `<label class="chk ${sel.includes(c) ? 'on' : ''}"><input type="checkbox" data-act="tpick" data-v="${c}" ${sel.includes(c) ? 'checked' : ''}> ${sel.includes(c) ? `<b>${sel.indexOf(c) + 1}</b> ` : ''}${esc(tName(c))}</label>`).join('')}</div>
+        <label class="fld">Seeding (bracket) <select id="tseed"><option value="pick">Order picked</option><option value="record">${MIX ? 'Real' : SEASON} record</option><option value="random">Random draw</option></select></label>
+        <label class="fld">You manage <select id="tmy"><option value="none">Nobody (watch)</option><option value="all">Every game, both sides</option>${(MIX ? sel : TEAMLIST()).map(c => `<option value="${c}">${esc(tName(c))}</option>`).join('')}</select></label>${yrSel}</div>
+      <div class="row" style="margin-top:12px"><span class="eyebrow">Teams (${sel.length} picked)</span>${quick.map(([k, l]) => `<button class="btn sm" data-act="tq" data-v="${k}">${l}</button>`).join('')}</div>${pickedList}
+      <div class="tpick">${shown.map(c => `<label class="chk ${sel.includes(c) ? 'on' : ''}"><input type="checkbox" data-act="tpick" data-v="${c}" ${sel.includes(c) ? 'checked' : ''}> ${sel.includes(c) ? `<b>${sel.indexOf(c) + 1}</b> ` : ''}${esc(tName(c))}${recOf(c)}</label>`).join('')}</div>
       <div style="margin-top:10px">${optsBlock()}</div>
       <div class="row" style="margin-top:12px"><button class="btn go" data-act="tour-new" ${sel.length < 2 ? 'disabled' : ''}>Start tournament</button></div></div></div>`;
   }
@@ -1436,7 +1503,7 @@ function vCards() {
   const bats = T.bat.slice().sort((a, b) => (D.cards[b].L.ab + D.cards[b].R.ab) - (D.cards[a].L.ab + D.cards[a].R.ab));
   const pits = T.pit.slice().sort((a, b) => D.cards[b].IP - D.cards[a].IP);
   const park = D.parks[c];
-  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between;align-items:end"><div><div class="eyebrow">${SEASON} card set</div><h2>${esc(tName(c))}</h2></div>
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between;align-items:end"><div><div class="eyebrow">${MIX ? (team(st.cardsTeam).yr + ' card set · all seasons') : SEASON + ' card set'}</div><h2>${esc(tName(c))}</h2></div>
     <label class="fld">Team <select data-chg="cards-team">${TEAMLIST().map(x => `<option value="${x}" ${x === c ? 'selected' : ''}>${esc(tName(x))}</option>`).join('')}</select></label></div>
     <div class="grid2" style="margin-top:10px"><div><h3>Default lineups</h3><table class="mini"><thead><tr><th class="l">vs RHP</th><th class="l">vs LHP</th></tr></thead><tbody>${T.luR.map((x, i) => `<tr><td class="l">${esc(tn(x[0]))} <span class="muted">${B.NUMPOS[x[1]]}</span></td><td class="l">${T.luL[i] ? esc(tn(T.luL[i][0])) + ` <span class="muted">${B.NUMPOS[T.luL[i][1]]}</span>` : ''}</td></tr>`).join('')}</tbody></table>
       <p class="muted" style="font-size:13px">Rotation: ${T.rot.map(tn).map(esc).join(', ')}</p></div>
