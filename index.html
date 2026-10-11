@@ -290,11 +290,15 @@ pre.gametext { grid-column: 1 / -1; font: 11.5px/1.4 var(--font-mono); backgroun
 .tpick b { color: var(--felt) }
 tr.po td { background: color-mix(in srgb, var(--felt) 10%, transparent) !important }
 .resume { border-left: 4px solid var(--gold) }
+.yrpick { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; opacity: .95 }
+.yrpick select { font: 600 14px var(--font-body); padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,.4); background: rgba(255,255,255,.12); color: var(--felt-ink) }
+.yrpick select option { color: #111 }
 </style>
 </head>
 <body>
 <header class="top"><div class="in">
-  <div class="brand">Box Seat Baseball<small>Under The Hood &middot; 2025</small></div>
+  <div class="brand">Box Seat Baseball<small>Under The Hood &middot; <span id="yrlbl">2025</span></small></div>
+  <label class="yrpick"><span>Season</span> <select id="season" aria-label="Season"></select></label>
   <nav class="tabs" id="tabs">
     <button data-tab="home">Home</button>
     <button data-tab="game">Game</button>
@@ -308,7 +312,7 @@ tr.po td { background: color-mix(in srgb, var(--felt) 10%, transparent) !importa
     <button data-tab="rules">Rules</button>
   </nav>
 </div></header>
-<main class="wrap" id="main"><div class="loading">Shuffling the 2025 card set…</div></main>
+<main class="wrap" id="main"><div class="loading">Shuffling the card set…</div></main>
 <script src="charts.js" charset="utf-8"></script>
 <script src="engine.js" charset="utf-8"></script>
 <script src="wild.js" charset="utf-8"></script>

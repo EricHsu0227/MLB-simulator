@@ -22,6 +22,7 @@ jobs:
         run: |
           mkdir _site
           cp index.html *.js bsb.json manifest.webmanifest icon* _site/
+          cp -r seasons _site/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

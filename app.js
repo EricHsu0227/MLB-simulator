@@ -4,16 +4,19 @@ const B = window.BSB, AI = window.BSB_AI, C = window.BSB_CHARTS;
 const $ = (s, el) => (el || document).querySelector(s);
 const main = $('#main');
 let D = null;
+const SEASONS = Array.from({ length: 17 }, (_, i) => 2010 + i);
+const SEASON = (() => { try { const v = +localStorage.getItem('bsb-yr'); return SEASONS.includes(v) ? v : 2025; } catch (e) { return 2025; } })();
+const skey = (k) => (SEASON === 2025 || k === 'bsb-prefs') ? k : k + '-' + SEASON;
 const st = { prefs: null, tab: 'home', game: null, showUth: true, histFilter: { team: '', type: '', q: '' }, cardsTeam: 'NYA', exh: { away: 'LAN', home: 'NYA', n: 1, user: 'home', asPlayed: false }, seasonView: 'standings', leaderLg: 'AL' };
 const store = {
-  get(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Could not save to this browser — progress lives only in this tab.'); } },
-  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  get(k) { try { const v = localStorage.getItem(skey(k)); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(skey(k), JSON.stringify(v)); } catch (e) { toast('Could not save to this browser — progress lives only in this tab.'); } },
+  del(k) { try { localStorage.removeItem(skey(k)); } catch (e) {} }
 };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tn = (cid) => cid == null ? '—' : B.titleName(D.cards[cid].n);
 const team = (c) => D.teams[c];
-const tName = (c) => c === 'ATH' ? 'Athletics' : team(c).city + ' ' + team(c).nick;
+const tName = (c) => (c === 'ATH' && SEASON >= 2025) ? 'Athletics' : team(c).city + ' ' + team(c).nick;
 const fmtDate = (d) => { const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+d.slice(4, 6) - 1]; return `${m} ${+d.slice(6, 8)}, ${d.slice(0, 4)}`; };
 const dayNum = (d) => Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8)) / 864e5;
 const avg3 = (x) => isFinite(x) ? x.toFixed(3).replace(/^0/, '') : '.000';
@@ -28,7 +31,15 @@ const teamSelect = (id, val) => `<select id="${id}">${TEAMLIST().map(c => `<opti
 // ======================================================
 st.prefs = Object.assign({ fatigue: 'L2H', bpEffects: true, wildPlays: true, autoRunner: true, speed: 'normal' }, store.get('bsb-prefs') || {});
 document.addEventListener('keydown', e => { if (st.tab === 'game' && (e.code === 'Space' || e.key === 'Enter') && !/INPUT|SELECT|BUTTON|TEXTAREA/.test((e.target.tagName || ''))) { e.preventDefault(); playStep(); } });
-fetch('bsb.json').then(r => r.json()).then(d => { D = d; D.gamesById = {}; D.games.forEach(g => D.gamesById[g.id] = g); loadState(); render(); })
+(function seasonPicker() {
+  const sel = document.getElementById('season'); const lbl = document.getElementById('yrlbl');
+  if (lbl) lbl.textContent = SEASON;
+  document.title = 'Box Seat Baseball ' + SEASON;
+  if (!sel) return;
+  sel.innerHTML = SEASONS.slice().reverse().map(y => `<option value="${y}"${y === SEASON ? ' selected' : ''}>${y}${y === 2025 ? ' (official set)' : ''}</option>`).join('');
+  sel.addEventListener('change', () => { try { localStorage.setItem('bsb-yr', sel.value); } catch (e) {} location.reload(); });
+})();
+fetch(SEASON === 2025 ? 'bsb.json' : `seasons/bsb-${SEASON}.json`).then(r => r.json()).then(d => { D = d; if (D.seeds) REAL_SEEDS = D.seeds; D.gamesById = {}; D.games.forEach(g => D.gamesById[g.id] = g); loadState(); render(); })
   .catch(e => { main.innerHTML = `<div class="loading">Couldn't load the card data (${esc(e.message)}). Reload the page to try again.</div>`; });
 
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) { st.tab = b.dataset.tab; render(); window.scrollTo(0, 0); } });
@@ -254,7 +265,7 @@ function act(a, el) {
       const opts = readOpts();
       st.exhSeries = { id: 'x', hi: x.home, lo: x.away, best: x.n, fixed: $('#exfmt').value === 'fixed', wins: { [x.home]: 0, [x.away]: 0 }, games: [], round: 'EXH', opts, user: x.user, tired: {} };
       store.set('bsb-exh', x.n === 1 ? null : st.exhSeries);
-      if (x.n === 1) { st.exhSeries = null; startGame({ away: x.away, home: x.home, date: '20250715', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, opts }, { kind: 'exh', user: x.user }); return; }
+      if (x.n === 1) { st.exhSeries = null; startGame({ away: x.away, home: x.home, date: SEASON + '0715', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, opts }, { kind: 'exh', user: x.user }); return; }
       render(); return;
     }
     case 'exh-next': { const s = st.exhSeries; const gs = seriesGameSetup(s, null); startGame(gs.setup, { kind: 'exh', user: s.user, sid: 'x' }); return; }
@@ -280,7 +291,7 @@ function act(a, el) {
     case 'lg': st.leaderLg = v; render(); return;
     case 'season-to-post': { P = newPost(seedsFromSeason(), { asPlayed: false, from: 'season' }); savePost(); st.tab = 'post'; render(); return; }
     // ----- postseason -----
-    case 'post-new': { P = newPost(REAL_SEEDS, { asPlayed: $('#pasp').checked, from: '2025' }); savePost(); render(); return; }
+    case 'post-new': { P = newPost(REAL_SEEDS, { asPlayed: $('#pasp').checked, from: String(SEASON) }); savePost(); render(); return; }
     case 'post-reset': { if (el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to erase'; return; } P = null; store.del('bsb-post'); ARC.clearKind('post'); st.recs = null; render(); return; }
     case 'post-play': { const s = P.series.find(x => x.id === v); const gs = seriesGameSetup(s, P); startGame(gs.setup, { kind: 'post', sid: s.id, user: $('#puser').value === 'both' ? 'both' : ($('#puser').value === 'hi' ? (gs.homeIsHi ? 'home' : 'away') : $('#puser').value === 'lo' ? (gs.homeIsHi ? 'away' : 'home') : 'none') }); return; }
     case 'post-sim': { const s = P.series.find(x => x.id === v); simSeriesGame(s, P); advancePost(P); savePost(); render(); return; }
@@ -504,7 +515,7 @@ function showExportText(filename, data) {
 // ======================================================
 // series (postseason + exhibition)
 // ======================================================
-const REAL_SEEDS = { AL: ['TOR', 'SEA', 'CLE', 'NYA', 'BOS', 'DET'], NL: ['MIL', 'PHI', 'LAN', 'CHN', 'SDN', 'CIN'] };
+let REAL_SEEDS = { AL: ['TOR', 'SEA', 'CLE', 'NYA', 'BOS', 'DET'], NL: ['MIL', 'PHI', 'LAN', 'CHN', 'SDN', 'CIN'] };
 const ROUNDS = ['WC', 'DS', 'LCS', 'WS'];
 function newPost(seeds, o) {
   const mk = (id, round, best, hi, lo, lg) => ({ id, round, best, hi, lo, lg, wins: hi && lo ? { [hi]: 0, [lo]: 0 } : {}, games: [], winner: null });
@@ -541,7 +552,7 @@ function seriesGameSetup(s, P) {
   [home, away].forEach(c => { if (stt.rot[c] == null) stt.rot[c] = 0; });
   const day = 100 + k * 1 + (ROUNDS.indexOf(s.round) + 1) * 10;
   const sp = asPlayed ? null : [pickStarter(stt, away, day), pickStarter(stt, home, day)];
-  const setup = { away, home, date: ref ? ref.d : '20251005', dn: ref ? (ref.dn === 'd' ? 'D' : 'N') : 'N', gameRef: asPlayed ? ref : null, asPlayed, seed: (Math.random() * 2 ** 31) | 0,
+  const setup = { away, home, date: ref ? ref.d : SEASON + '1005', dn: ref ? (ref.dn === 'd' ? 'D' : 'N') : 'N', gameRef: asPlayed ? ref : null, asPlayed, seed: (Math.random() * 2 ** 31) | 0,
     weatherMode: asPlayed ? 'actual' : 'roll', sp, isPost: s.round !== 'EXH', tired: [tiredSet(stt, away, day), tiredSet(stt, home, day)], opts: s.opts || (P && P.opts) || readOpts() };
   return { setup, homeIsHi: home === s.hi, day };
 }
@@ -604,19 +615,19 @@ function seedsFromSeason() {
 // ======================================================
 function vHome() {
   const cur = st.game && !st.game.g.over;
-  return `${cur ? '' : ''}<section class="hero"><div class="eyebrow">2025 card set · Under The Hood standard rules</div>
+  return `${cur ? '' : ''}<section class="hero"><div class="eyebrow">${SEASON} card set${SEASON === 2025 ? '' : ' (built from ' + SEASON + ' stats)'} · Under The Hood standard rules</div>
   <h1>Pull up a box seat.</h1>
-  <p>Every 2025 player card, ballpark card and Tri-Fold chart, played by the book. Each at-bat shows the dice, the card it hit, and every chart the play passed through.</p></section>
+  <p>Every ${SEASON} player card, ballpark card and Tri-Fold chart, played by the book. Each at-bat shows the dice, the card it hit, and every chart the play passed through.</p></section>
   <div class="modes">
-    <div class="mode"><div class="eyebrow">162 games</div><h3>Season replay</h3><p class="muted">Replay the real 2025 schedule. Use the actual starting lineups and pitchers from every game, or let the manager AI set lineups and run a five-man rotation.</p>
+    <div class="mode"><div class="eyebrow">${SEASON === 2020 ? '60' : '162'} games</div><h3>Season replay</h3><p class="muted">Replay the real ${SEASON} schedule. Use the actual starting lineups and pitchers from every game, or let the manager AI set lineups and run a five-man rotation.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="season">${S ? 'Continue season' : 'Start a season'}</button></div></div>
-    <div class="mode"><div class="eyebrow">October</div><h3>Postseason</h3><p class="muted">The 2025 bracket from the Wild Card round to the World Series, or the bracket from your own season replay. Real lineups are used whenever the matchup actually happened.</p>
+    <div class="mode"><div class="eyebrow">October</div><h3>Postseason</h3><p class="muted">The ${SEASON} bracket from the Wild Card round to the World Series, or the bracket from your own season replay. Real lineups are used whenever the matchup actually happened.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="post">${P ? 'Continue postseason' : 'Open bracket'}</button></div></div>
-    <div class="mode"><div class="eyebrow">Any matchup</div><h3>Exhibition</h3><p class="muted">Any two 2025 teams for one game or a best-of series. Manage one side, both sides, or watch the AI play it out.</p>
+    <div class="mode"><div class="eyebrow">Any matchup</div><h3>Exhibition</h3><p class="muted">Any two ${SEASON} teams for one game or a best-of series. Manage one side, both sides, or watch the AI play it out.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="exh">Set up a game</button></div></div>
     <div class="mode"><div class="eyebrow">Your rules</div><h3>Custom tournament</h3><p class="muted">Pick any clubs and run a knockout bracket, a round robin, or a round robin into playoffs, with your own series lengths.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="tour">${st.tour ? 'Continue tournament' : 'Build a tournament'}</button></div></div>
-    <div class="mode"><div class="eyebrow">${D.games.length.toLocaleString()} games</div><h3>Real games</h3><p class="muted">Pick any game played in 2025, regular season or postseason, and replay it with the as-played lineups and the actual game-time weather.</p>
+    <div class="mode"><div class="eyebrow">${D.games.length.toLocaleString()} games</div><h3>Real games</h3><p class="muted">Pick any game played in ${SEASON}, regular season or postseason, and replay it with the as-played lineups and the actual game-time weather.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="hist">Find a game</button></div></div>
   </div>
   ${cur ? `<div class="panel resume" style="margin-top:16px"><div class="eyebrow">Saved game in progress · ${esc(KINDN[st.game.ctx.kind] || 'Game')}</div><div class="row" style="justify-content:space-between"><b style="font:700 18px var(--font-display)">${esc(st.game.g.teams[0].abbr)} ${st.game.g.score[0]}, ${esc(st.game.g.teams[1].abbr)} ${st.game.g.score[1]} · ${st.game.g.half === 0 ? 'Top' : 'Bottom'} ${B.ord(st.game.g.inning)}, ${st.game.g.outs} out</b><button class="btn go" data-act="tab" data-v="game">Resume game</button></div></div>` : ''}`;
@@ -1032,7 +1043,7 @@ function batterCard(c, focus, cell, note) {
   const T = D.teams[c.tm];
   const pos = (c.pos || []).join('/');
   return `<div class="card"><div class="hd"><span class="nm">${esc(c.n)}</span><span style="font-weight:700">B/${{ R: 'Right', L: 'Left', B: 'Both' }[c.b]} [${c.tend}]</span></div>
-    <div class="meta"><span>${pos}</span>${c.F && c.F.length ? `<span>F${c.arm ? '(Arm)' : ''}: ${c.F.join('/')}${c.arm ? '(' + c.arm + ')' : ''}</span>` : ''}${c.E && c.E.length ? `<span>E: ${c.E.join('/')}</span>` : ''}${c.DP != null ? `<span>DP: ${c.DP}</span>` : ''}<span class="tm">${T ? '2025 ' + esc(T.nick) : (note || 'Generic')}</span></div>
+    <div class="meta"><span>${pos}</span>${c.F && c.F.length ? `<span>F${c.arm ? '(Arm)' : ''}: ${c.F.join('/')}${c.arm ? '(' + c.arm + ')' : ''}</span>` : ''}${c.E && c.E.length ? `<span>E: ${c.E.join('/')}</span>` : ''}${c.DP != null ? `<span>DP: ${c.DP}</span>` : ''}<span class="tm">${T ? SEASON + ' ' + esc(T.nick) : (note || 'Generic')}</span></div>
     <div class="meta"><span>B/R: ${c.BR}</span><span>SB/R: ${c.SBR}</span><span>SBF: ${c.SBF}</span></div>
     <div class="vs">${vs('L', 'LEFT')}${vs('R', 'RIGHT')}</div><div class="cgrid">${cols}</div></div>`;
 }
@@ -1050,7 +1061,7 @@ function pitcherCard(c, pcell, fat) {
   }
   const T = D.teams[c.tm];
   return `<div class="card"><div class="hd"><span class="nm">${esc(c.n)}</span><span style="font-weight:700">T/${c.th === 'L' ? 'Left' : 'Right'} [${c.tend}]</span></div>
-    <div class="meta"><span>P · E: ${c.E}</span><span>Bats: ${c.b}</span><span>Hit: ${c.hc}</span><span class="tm">2025 ${T ? esc(T.nick) : ''}</span></div>
+    <div class="meta"><span>P · E: ${c.E}</span><span>Bats: ${c.b}</span><span>Hit: ${c.hc}</span><span class="tm">${SEASON} ${T ? esc(T.nick) : ''}</span></div>
     <div class="meta"><span>G ${c.G} GS ${c.GS} IP ${c.IP}</span><span>ERA ${c.ERA}</span><span>W/L ${c.W}-${c.Lo}</span><span>SV ${c.SV}</span></div>
     <div class="meta"><span>L1 Ftg ${c.F1}</span><span>L2 Ftg ${c.F2}${fat != null ? ` (now ${fat.toFixed(1)})` : ''}</span><span>SBR ${c.SBR}</span><span>SBF ${c.SBF}</span></div>
     <div class="meta"><span>Early ${c.early}</span><span>Late ${c.late}</span><span>WP ${c.WP}</span><span>PO/BK ${c.PO}</span><span>HBP ${c.HBP}</span><span>HR vs L ${B.fmtS(c.HRL)} · vs R ${B.fmtS(c.HRR)}</span></div>
@@ -1111,7 +1122,7 @@ function vExh() {
       <div class="schedule">${s.games.map((g, i) => `<div class="gline"><span>Game ${i + 1}: ${team(g.v).abbr} ${g.sc[0]} @ ${team(g.h).abbr} ${g.sc[1]}</span><span class="tag ${''}">${team(g.w).abbr} win</span><span></span></div>`).join('')}</div>
       <div class="row" style="margin-top:10px">${!over ? `<button class="btn go" data-act="exh-next">Play game ${s.games.length + 1}</button><button class="btn" data-act="exh-sim">Sim game ${s.games.length + 1}</button><button class="btn" data-act="exh-simall">Sim the rest</button>` : ''}<button class="btn" data-act="exh-reset">New matchup</button></div></div>`;
   }
-  return `<div class="section"><div class="panel"><h2>Exhibition</h2><p class="muted">Lineups come from each club's most-used 2025 lineup against the opposing starter's hand. Starters rotate through the five most-used 2025 starters, and relievers tire across a series.</p>
+  return `<div class="section"><div class="panel"><h2>Exhibition</h2><p class="muted">Lineups come from each club's most-used ${SEASON} lineup against the opposing starter's hand. Starters rotate through the five most-used ${SEASON} starters, and relievers tire across a series.</p>
     <div class="row" style="margin-top:10px;align-items:end"><label class="fld">Visitors ${teamSelect('exaway', x.away)}</label><label class="fld">Home ${teamSelect('exhome', x.home)}</label>
     <label class="fld">Games <select id="exn">${[1, 3, 4, 5, 7].map(n => `<option ${n === x.n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
     <label class="fld">Format <select id="exfmt"><option value="best">Best of</option><option value="fixed">Play all games</option></select></label>
@@ -1128,11 +1139,11 @@ function vHist() {
   if (f.type) list = list.filter(g => f.type === 'post' ? g.ty !== 'r' : g.ty === f.type);
   if (f.date) list = list.filter(g => g.d >= f.date);
   const shown = list.slice(0, lim);
-  return `<div class="section"><div class="panel"><h2>Real 2025 games</h2><p class="muted">Every game from the 2025 Retrosheet record. With as-played lineups on, both clubs use the starters who actually took the field, and the bullpen follows the real order of relievers when it can. Final scores are shown so you can compare.</p>
+  return `<div class="section"><div class="panel"><h2>Real ${SEASON} games</h2><p class="muted">Every game from the ${SEASON} season. With as-played lineups on, both clubs use the starters who actually took the field, and the bullpen follows the real order of relievers when it can. Final scores are shown so you can compare.</p>
     <div class="row" style="margin-top:10px;align-items:end">
       <label class="fld">Team <select data-chg="hist-team"><option value="">All teams</option>${TEAMLIST().map(c => `<option value="${c}" ${f.team === c ? 'selected' : ''}>${esc(tName(c))}</option>`).join('')}</select></label>
       <label class="fld">Games <select data-chg="hist-type"><option value="">All</option><option value="r" ${f.type === 'r' ? 'selected' : ''}>Regular season</option><option value="post" ${f.type === 'post' ? 'selected' : ''}>Postseason</option>${['WC', 'DS', 'LCS', 'WS'].map(t => `<option value="${t}" ${f.type === t ? 'selected' : ''}>${TYN[t]}</option>`).join('')}</select></label>
-      <label class="fld">From date <input type="date" data-chg="hist-date" min="2025-03-18" max="2025-11-01" value="${f.date ? f.date.slice(0, 4) + '-' + f.date.slice(4, 6) + '-' + f.date.slice(6, 8) : ''}"></label>
+      <label class="fld">From date <input type="date" data-chg="hist-date" min="${SEASON}-02-15" max="${SEASON}-11-30" value="${f.date ? f.date.slice(0, 4) + '-' + f.date.slice(4, 6) + '-' + f.date.slice(6, 8) : ''}"></label>
       <label class="chk"><input type="checkbox" id="hasp" checked> As-played lineups</label><label class="chk"><input type="checkbox" id="hwx" checked> Actual weather</label>
       <label class="fld">You manage <select id="huser"><option value="none">Nobody (watch)</option><option value="away">Visitors</option><option value="home">Home</option><option value="both">Both</option></select></label></div>
     <div style="margin-top:8px">${optsBlock()}</div></div>
@@ -1169,9 +1180,9 @@ function leadersHtml(stt, lg, gamesPlayed) {
   <div class="modes" style="margin-top:10px">${cats.map(([nm, rows, fmt]) => `<div class="panel"><h3>${nm}</h3><table class="mini"><tbody>${rows.map(([c, r, v]) => `<tr><td class="l">${esc(tn(+c))} <span class="muted">${team(r.tm).abbr}</span></td><td><b>${fmt(v)}</b></td></tr>`).join('') || '<tr><td class="l muted">No qualifiers yet</td></tr>'}</tbody></table></div>`).join('')}</div>`;
 }
 function vSeason() {
-  if (!S) return `<div class="section"><div class="panel"><h2>2025 season replay</h2><p class="muted">Replays all 2,430 games of the real 2025 schedule in order. Simulate a day, a week or the whole year, or step in and manage any game yourself. Your season is saved in this browser.</p>
+  if (!S) return `<div class="section"><div class="panel"><h2>${SEASON} season replay</h2><p class="muted">Replays all ${D.games.filter(g => g.ty === 'r').length.toLocaleString()} games of the real ${SEASON} schedule in order. Simulate a day, a week or the whole year, or step in and manage any game yourself. Your season is saved in this browser.</p>
     <label class="chk" style="margin-top:10px"><input type="checkbox" id="sasp"> Use as-played lineups (real starting lineups, starting pitchers, reliever order and weather from every game)</label>
-    <p class="muted" style="font-size:13px">Without it, each club uses its most common 2025 lineup against the opposing starter's hand, a five-man rotation that needs four days of rest, and weather rolled from the ballpark card.</p>
+    <p class="muted" style="font-size:13px">Without it, each club uses its most common ${SEASON} lineup against the opposing starter's hand, a five-man rotation that needs four days of rest, and weather rolled from the ballpark card.</p>
     <div style="margin-top:10px">${optsBlock()}</div>
     <div class="row" style="margin-top:10px"><button class="btn go" data-act="season-new">Start the season</button></div></div></div>`;
   const done = S.next >= S.sched.length;
@@ -1187,7 +1198,7 @@ function vSeason() {
     const recent = S.sched.slice(Math.max(0, S.next - 60), S.next).reverse().map(id => D.gamesById[id]).filter(g => S.res[g.id]);
     body = `<div class="schedule">${recent.map(g => { const r = S.res[g.id]; return `<div class="gline"><span><span class="muted">${fmtDate(g.d)}</span> · <b>${team(g.v).abbr} ${r.sc[0]} @ ${team(g.h).abbr} ${r.sc[1]}</b>${r.inn > 9 ? ` (${r.inn})` : ''} <span class="muted">W ${esc(tn(r.w))}${r.l != null ? ' · L ' + esc(tn(r.l)) : ''}${r.s != null ? ' · SV ' + esc(tn(r.s)) : ''}</span></span><span class="muted" style="font-size:12px">Real: ${g.sc[0]}-${g.sc[1]}</span><span></span></div>`; }).join('') || '<p class="muted">No games played yet.</p>'}</div>`;
   }
-  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${S.asPlayed ? 'As-played lineups' : 'Manager AI lineups'}</div><h2>2025 season replay</h2></div>
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${S.asPlayed ? 'As-played lineups' : 'Manager AI lineups'}</div><h2>${SEASON} season replay</h2></div>
     <button class="btn sm" data-act="season-reset">Erase season</button></div>
     <p id="simprog" class="muted">${done ? 'Regular season complete.' : `Next up: ${fmtDate(nextRef.d)} · ${played} of ${S.sched.length} games played`}</p>
     ${!done ? `<div class="row"><button class="btn" data-act="season-simday">Sim this day</button><button class="btn" data-act="season-simweek">Sim a week</button><button class="btn" data-act="season-sim" data-v="0">Sim to end of season</button></div>` : `<div class="row"><button class="btn go" data-act="season-to-post">Start postseason from these standings</button></div>`}
@@ -1200,12 +1211,12 @@ function vSeason() {
 
 // ---------- postseason ----------
 function vPost() {
-  if (!P) return `<div class="section"><div class="panel"><h2>2025 postseason</h2><p class="muted">The real 2025 bracket: Toronto, Seattle, Cleveland, New York, Boston and Detroit in the American League; Milwaukee, Philadelphia, Los Angeles, Chicago, San Diego and Cincinnati in the National League.${S && S.next >= S.sched.length ? ' Your finished season replay can seed its own bracket from the Season tab.' : ''}</p>
+  if (!P) return `<div class="section"><div class="panel"><h2>${SEASON} postseason</h2><p class="muted">The real ${SEASON} seeds: ${REAL_SEEDS.AL.map(c => esc(tName(c))).join(', ')} in the American League; ${REAL_SEEDS.NL.map(c => esc(tName(c))).join(', ')} in the National League.${SEASON < 2022 ? ' This table plays every season in today\'s 12-team format; seasons with fewer playoff clubs are filled out with the next-best records.' : ''}${S && S.next >= S.sched.length ? ' Your finished season replay can seed its own bracket from the Season tab.' : ''}</p>
     <label class="chk" style="margin-top:8px"><input type="checkbox" id="pasp" checked> Use as-played lineups whenever the real series had that game</label>
     <div style="margin-top:10px">${optsBlock()}</div>
     <div class="row" style="margin-top:10px"><button class="btn go" data-act="post-new">Open the bracket</button></div></div>${oneSeriesHtml()}</div>`;
   const col = (r, title) => `<div style="display:grid;gap:10px;align-content:start"><div class="eyebrow">${title}</div>${P.series.filter(s => s.round === r).map(serBox).join('')}</div>`;
-  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${P.from === 'season' ? 'Seeded from your season replay' : 'Real 2025 seeds'}${P.asPlayed ? ' · as-played lineups' : ''}</div><h2>${P.champ ? esc(tName(P.champ)) + ' win the World Series' : 'Postseason bracket'}</h2></div>
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${P.from === 'season' ? 'Seeded from your season replay' : 'Real ' + SEASON + ' seeds'}${P.asPlayed ? ' · as-played lineups' : ''}</div><h2>${P.champ ? esc(tName(P.champ)) + ' win the World Series' : 'Postseason bracket'}</h2></div>
     <div class="row"><label class="fld">You manage <select id="puser"><option value="none">Nobody</option><option value="hi">Higher seed</option><option value="lo">Lower seed</option><option value="both">Both</option></select></label>
     ${!P.champ ? `<button class="btn" data-act="post-simround">Sim this round</button><button class="btn" data-act="post-simall">Sim the rest</button>` : ''}<button class="btn sm" data-act="post-reset">Erase bracket</button></div></div></div>
     <div class="bracket">${col('WC', 'Wild Card · best of 3')}${col('DS', 'Division Series · best of 5')}${col('LCS', 'LCS · best of 7')}${col('WS', 'World Series · best of 7')}</div>${oneSeriesHtml()}</div>`;
@@ -1285,7 +1296,7 @@ function tourAdvance(t) {
 function tourGameSetup(t, v, h, day) {
   t.plog = t.plog || {};
   const sp = [pickStarter(t, v, day), pickStarter(t, h, day)];
-  return { away: v, home: h, date: '20250801', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, sp, tired: [tiredSet(t, v, day), tiredSet(t, h, day)], opts: t.opts, isPost: false };
+  return { away: v, home: h, date: SEASON + '0801', dn: Math.random() < .3 ? 'D' : 'N', seed: (Math.random() * 2 ** 31) | 0, sp, tired: [tiredSet(t, v, day), tiredSet(t, h, day)], opts: t.opts, isPost: false };
 }
 function tourUser(t, v, h) { const m = t.myTeam; if (m === 'all') return 'both'; if (m === v) return 'away'; if (m === h) return 'home'; return 'none'; }
 function tourNextRR(t) { return t.rr.findIndex(x => !x.sc); }
@@ -1319,15 +1330,15 @@ function vTour() {
   const t = st.tour;
   if (!t) {
     const sel = st.tourPick || [];
-    const quick = [['AL', 'American League'], ['NL', 'National League'], ['P25', '2025 playoff teams'], ['ALL', 'All 30'], ['NONE', 'Clear']];
-    return `<div class="section"><div class="panel"><h2>Custom tournament</h2><p class="muted">Pick any 2025 clubs and a format. Round-robin games rotate starters with rest days, and playoff series follow 2-2-1 (five games) or 2-3-2 (seven games) home field for the higher seed.</p>
+    const quick = [['AL', 'American League'], ['NL', 'National League'], ['P25', SEASON + ' playoff teams'], ['ALL', 'All 30'], ['NONE', 'Clear']];
+    return `<div class="section"><div class="panel"><h2>Custom tournament</h2><p class="muted">Pick any ${SEASON} clubs and a format. Round-robin games rotate starters with rest days, and playoff series follow 2-2-1 (five games) or 2-3-2 (seven games) home field for the higher seed.</p>
       <div class="row" style="align-items:end;margin-top:10px"><label class="fld">Name <input type="text" id="tname" value="${esc(st.tourName || 'Box Seat Invitational')}"></label>
         <label class="fld">Format <select id="tfmt"><option value="bracket">Bracket (knockout series)</option><option value="rrpo">Round robin, then playoffs</option><option value="rr">Round robin only</option></select></label>
         <label class="fld">Round-robin meetings <select id="trr">${[1, 2, 3, 4, 6].map(n => `<option ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
         <label class="fld">Playoff teams <select id="tpo">${[2, 4, 6, 8, 12, 16].map(n => `<option ${n === 4 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
         <label class="fld">Series length <select id="tbest">${[1, 3, 5, 7].map(n => `<option value="${n}" ${n === 5 ? 'selected' : ''}>Best of ${n}</option>`).join('')}</select></label>
         <label class="fld">Final <select id="tfinal">${[1, 3, 5, 7].map(n => `<option value="${n}" ${n === 7 ? 'selected' : ''}>Best of ${n}</option>`).join('')}</select></label>
-        <label class="fld">Seeding (bracket) <select id="tseed"><option value="pick">Order picked</option><option value="record">2025 record</option><option value="random">Random draw</option></select></label>
+        <label class="fld">Seeding (bracket) <select id="tseed"><option value="pick">Order picked</option><option value="record">${SEASON} record</option><option value="random">Random draw</option></select></label>
         <label class="fld">You manage <select id="tmy"><option value="none">Nobody (watch)</option><option value="all">Every game, both sides</option>${TEAMLIST().map(c => `<option value="${c}">${esc(tName(c))}</option>`).join('')}</select></label></div>
       <div class="row" style="margin-top:12px"><span class="eyebrow">Teams (${sel.length} picked)</span>${quick.map(([k, l]) => `<button class="btn sm" data-act="tq" data-v="${k}">${l}</button>`).join('')}</div>
       <div class="tpick">${TEAMLIST().map(c => `<label class="chk ${sel.includes(c) ? 'on' : ''}"><input type="checkbox" data-act="tpick" data-v="${c}" ${sel.includes(c) ? 'checked' : ''}> ${sel.includes(c) ? `<b>${sel.indexOf(c) + 1}</b> ` : ''}${esc(tName(c))}</label>`).join('')}</div>
@@ -1410,7 +1421,7 @@ function oneSeriesHtml() {
       ${!over ? `<div class="row" style="margin-top:10px"><button class="btn go" data-act="one-play">Play game ${s.games.length + 1}</button><button class="btn" data-act="one-sim">Sim game ${s.games.length + 1}</button><button class="btn" data-act="one-simser">Sim the series</button></div>` : ''}</div>`;
   }
   const rs = realSeries(); const pick = st.onePick || rs[0].key;
-  return `<div class="panel"><h2>Play one series</h2><p class="muted">Replay a single 2025 postseason series, or set up any matchup in a playoff format. Home field follows the postseason pattern (2-2-1 for five games, 2-3-2 for seven).</p>
+  return `<div class="panel"><h2>Play one series</h2><p class="muted">Replay a single ${SEASON} postseason series, or set up any matchup in a playoff format. Home field follows the postseason pattern (2-2-1 for five games, 2-3-2 for seven).</p>
     <div class="row" style="align-items:end;margin-top:8px"><label class="fld">Series <select id="onepick" data-chg="one-pick">${rs.map(r => `<option value="${r.key}" ${pick === r.key ? 'selected' : ''}>${r.ty} · ${esc(team(r.lo).abbr)} vs ${esc(team(r.hi).abbr)} (real: ${Object.entries(r.w).map(([c, n]) => team(c).abbr + ' ' + n).join('-')})</option>`).join('')}<option value="custom" ${pick === 'custom' ? 'selected' : ''}>Custom matchup…</option></select></label>
     ${pick === 'custom' ? `<label class="fld">Home field ${teamSelect('onehi', 'LAN')}</label><label class="fld">Opponent ${teamSelect('onelo', 'NYA')}</label><label class="fld">Format <select id="oneround"><option value="WC">Wild Card (best of 3)</option><option value="DS">Division Series (5)</option><option value="LCS">LCS (7)</option><option value="WS" selected>World Series (7)</option></select></label>` : ''}
     <label class="fld">You manage <select id="oneuser"><option value="none">Nobody</option><option value="hi">Home-field team</option><option value="lo">Other team</option><option value="both">Both</option></select></label>
@@ -1425,7 +1436,7 @@ function vCards() {
   const bats = T.bat.slice().sort((a, b) => (D.cards[b].L.ab + D.cards[b].R.ab) - (D.cards[a].L.ab + D.cards[a].R.ab));
   const pits = T.pit.slice().sort((a, b) => D.cards[b].IP - D.cards[a].IP);
   const park = D.parks[c];
-  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between;align-items:end"><div><div class="eyebrow">2025 card set</div><h2>${esc(tName(c))}</h2></div>
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between;align-items:end"><div><div class="eyebrow">${SEASON} card set</div><h2>${esc(tName(c))}</h2></div>
     <label class="fld">Team <select data-chg="cards-team">${TEAMLIST().map(x => `<option value="${x}" ${x === c ? 'selected' : ''}>${esc(tName(x))}</option>`).join('')}</select></label></div>
     <div class="grid2" style="margin-top:10px"><div><h3>Default lineups</h3><table class="mini"><thead><tr><th class="l">vs RHP</th><th class="l">vs LHP</th></tr></thead><tbody>${T.luR.map((x, i) => `<tr><td class="l">${esc(tn(x[0]))} <span class="muted">${B.NUMPOS[x[1]]}</span></td><td class="l">${T.luL[i] ? esc(tn(T.luL[i][0])) + ` <span class="muted">${B.NUMPOS[T.luL[i][1]]}</span>` : ''}</td></tr>`).join('')}</tbody></table>
       <p class="muted" style="font-size:13px">Rotation: ${T.rot.map(tn).map(esc).join(', ')}</p></div>
@@ -1451,6 +1462,6 @@ function vRules() {
   <h3>Coach's decision on fly balls (red die needed to be safe)</h3><div class="scroll"><table class="mini" style="max-width:420px"><thead><tr><th class="l">B/R</th><th>Arm A</th><th>Arm B</th><th>Arm C</th><th>Arm D</th></tr></thead><tbody>${cdRow(fb)}</tbody></table></div>
   <h3>Deep fly check</h3><p>Total of pitcher HR rating + park field rating + wind: ${Object.entries(C.dfck).sort((a, b) => b[0] - a[0]).map(([k, v]) => `<span class="tag">${k}: ${v}</span>`).join(' ')}. An "r" means an exact match re-rolls (0–4 out, 5–9 home run).</p>
   <h3>Special situations outs (red die)</h3><p>${C.specOut.map((v, i) => `<span class="tag">${i}: ${v}</span>`).join(' ')}</p>
-  <h3>House notes</h3><p>Pitchers never bat (the universal DH applied in 2025). Extra innings in the regular season start with a runner on second unless you turn that off. Coach's decisions, pitching changes and other judgment calls are made by the manager AI for any side you aren't managing, and the AI follows the Auto Steal Overrides guideline for steals.</p></div></div>`;
+  <h3>House notes</h3><p>Pitchers never bat: this table always uses a DH, even in seasons when National League pitchers hit (as-played lineups put a DH in the pitcher's spot). Extra innings in the regular season start with a runner on second unless you turn that off. Coach's decisions, pitching changes and other judgment calls are made by the manager AI for any side you aren't managing, and the AI follows the Auto Steal Overrides guideline for steals.</p></div></div>`;
 }
 })();
