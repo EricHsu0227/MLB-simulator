@@ -21,7 +21,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir _site
-          cp -r index.html manifest.webmanifest sw.js web data _site/
+          cp index.html *.js bsb.json manifest.webmanifest icon* _site/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

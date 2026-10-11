@@ -2,36 +2,311 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f5132">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Diamond Sim">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f5a3c">
+<meta name="description" content="Box Seat Baseball Under The Hood rules with the 2025 card set: season replay, postseason, exhibition and real 2025 games.">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="web/icons/apple-touch-icon.png">
-<title>Diamond Sim — MLB history simulator</title>
-<link rel="stylesheet" href="web/css/style.css">
-<link rel="icon" type="image/png" href="web/icons/icon-192.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}[hidden]{display:none!important}img{max-width:100%}</style>
+<title>Box Seat Baseball Table</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a game-table workspace — top bar with modes, a scoreboard strip, then a two-column table (cards + field | play log) that stacks on phones. */
+:root {
+  --felt: #1f5a3c;        /* trifold chart green */
+  --felt-ink: #ffffff;
+  --paper: #f6f4ee;       /* card stock */
+  --bg: #e9ece6;          /* table */
+  --panel: #ffffff;
+  --ink: #1b241e;
+  --muted: #5d6a61;
+  --line: #cfd6cd;
+  --hit: #d0211c;         /* red card results */
+  --out: #1c3fbf;         /* blue card results */
+  --gold: #b07d12;
+  --hl: #ffe58a;
+  --warn: #a35b00;
+  --font-display: "Zilla Slab", "Rockwell", Georgia, serif;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --felt: #2b7a52; --felt-ink: #f2fff6; --paper: #1c221e; --bg: #101512; --panel: #171d19; --ink: #e5ece6; --muted: #93a398; --line: #2c3730;
+  --hit: #ff6a5c; --out: #7f9cff; --gold: #e0b44a; --hl: #5a4a10; --warn: #e2a14a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --felt: #2b7a52; --felt-ink: #f2fff6; --paper: #1c221e; --bg: #101512; --panel: #171d19; --ink: #e5ece6; --muted: #93a398; --line: #2c3730;
+  --hit: #ff6a5c; --out: #7f9cff; --gold: #e0b44a; --hl: #5a4a10; --warn: #e2a14a; color-scheme: dark }
+* { box-sizing: border-box }
+html, body { height: 100% }
+body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-body); margin: 0 }
+button, select, input { font: inherit; color: inherit }
+.wrap { padding-inline: 16px; padding-block: 0 40px; max-width: 1400px; margin: 0 auto }
+header.top { background: var(--felt); color: var(--felt-ink); position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20 }
+header.top .in { max-width: 1400px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap }
+.brand { font: 700 22px/1 var(--font-display); letter-spacing: .3px; white-space: nowrap }
+.brand small { font: 600 11px var(--font-body); letter-spacing: 1.5px; text-transform: uppercase; opacity: .8; margin-left: 8px }
+nav.tabs { display: flex; gap: 4px; flex-wrap: wrap }
+nav.tabs button { background: transparent; border: 1px solid transparent; color: var(--felt-ink); padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 600 }
+nav.tabs button[aria-current="true"] { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.35) }
+nav.tabs button:hover { background: rgba(255,255,255,.1) }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0 }
+h1 { font-size: 30px } h2 { font-size: 22px } h3 { font-size: 17px }
+.eyebrow { font: 700 11px var(--font-body); letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted) }
+.muted { color: var(--muted) }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; min-width: 0 }
+.panel > h3 { margin-bottom: 8px }
+.section { display: grid; gap: 16px; padding-top: 18px }
+.btn { background: var(--panel); border: 1px solid var(--line); padding: 7px 13px; border-radius: 4px; cursor: pointer; font-weight: 600 }
+.btn:hover { border-color: var(--felt) }
+.btn.go { background: var(--felt); color: var(--felt-ink); border-color: var(--felt) }
+.btn.go:hover { filter: brightness(1.1) }
+.btn.sm { padding: 3px 8px; font-size: 13px }
+.btn:disabled { opacity: .45; cursor: not-allowed }
+.btn.on { outline: 2px solid var(--gold); outline-offset: -2px }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px }
+label.fld { display: grid; gap: 3px; font-size: 13px; color: var(--muted); font-weight: 600 }
+select, input[type=text], input[type=number], input[type=date] { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; min-width: 0 }
+.chk { display: flex; gap: 6px; align-items: center; font-size: 14px }
+table { border-collapse: collapse; width: 100% }
+th, td { padding: 4px 6px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+th { font-size: 11px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); font-weight: 700 }
+td.l, th.l { text-align: left }
+tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 45%, transparent) }
+.scroll { overflow-x: auto }
+.tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .5px; padding: 1px 6px; border-radius: 3px; background: var(--bg); border: 1px solid var(--line) }
+.tag.w { background: var(--felt); color: var(--felt-ink); border-color: var(--felt) }
+.link { background: none; border: none; color: var(--out); cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px }
+
+/* ---------- scoreboard ---------- */
+.board { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; background: #14211a; color: #f3f1e7; border-radius: 6px; padding: 12px 14px; margin-top: 16px }
+.board table td, .board table th { color: #f3f1e7; border: none; padding: 2px 6px; background: transparent !important }
+.board th { color: #9fb7a7 }
+.board .tn { text-align: left; font: 700 16px var(--font-display) }
+.board .rhe { font-weight: 700; color: #ffd36b }
+.board .state { display: flex; gap: 14px; align-items: center }
+.board .inn { font: 700 20px var(--font-display); color: #ffd36b }
+.outs i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #ffd36b; margin-right: 3px }
+.outs i.on { background: #ffd36b }
+
+/* ---------- table area ---------- */
+.table { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; align-items: start }
+.cards2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px }
+.card { background: var(--paper); border: 1px solid var(--line); border-radius: 5px; padding: 10px 10px 8px; font-size: 11.5px; line-height: 1.3; min-width: 0 }
+.card .nm { font: 700 15px var(--font-display); color: var(--hit); text-transform: uppercase; letter-spacing: .3px }
+.card .hd { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; flex-wrap: wrap }
+.card .meta { font-weight: 600; display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px }
+.card .vs { margin-top: 4px; display: grid; gap: 1px }
+.card .vs b { font-style: italic }
+.card .tm { font: 700 10px var(--font-body); background: #7d1717; color: #fff; padding: 2px 6px; border-radius: 2px; letter-spacing: .5px; text-transform: uppercase }
+.cgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 6px; margin-top: 6px; font-family: var(--font-mono); font-size: 10.5px }
+.cgrid .col { display: grid; grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr); align-items: baseline }
+.cgrid .h { color: var(--felt); font: 700 8.5px var(--font-body); padding-bottom: 2px }
+.cgrid .n { font-weight: 700; color: var(--ink) }
+.r { color: var(--hit) } .bl { color: var(--out) }
+.cgrid span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 1px }
+.cgrid .act { background: var(--hl); outline: 1px solid var(--gold); border-radius: 2px }
+.cgrid .dim { opacity: .35 }
+.pgrid { display: grid; grid-template-columns: 22px repeat(6, minmax(0, 1fr)); font-family: var(--font-mono); font-size: 10.5px; margin-top: 6px; row-gap: 1px }
+.pgrid .h { color: var(--felt); font: 700 8.5px var(--font-body); text-align: center }
+.pgrid span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--out); padding: 0 1px }
+.pgrid .lab { color: var(--ink); font-weight: 700; text-align: right; padding-right: 4px }
+.pgrid .act { background: var(--hl); outline: 1px solid var(--gold) }
+.dice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap }
+.die { width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center; font: 700 15px var(--font-mono); border: 1px solid var(--line) }
+.die.w { background: #fffdf5; color: #222 } .die.b { background: #1d1d1d; color: #fff } .die.rd { background: #c2241b; color: #fff; border-radius: 50% }
+.die.gr { background: #1f7a43; color: #fff; border-radius: 50% } .die.pd { background: #d9d4c4; color: #222; border-radius: 3px; width: auto; padding: 0 6px; min-width: 30px }
+.field { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 14px; align-items: center }
+.field svg { width: 170px; height: 150px; max-width: 100% }
+.mgr { display: grid; gap: 8px }
+.mgr .grp { display: flex; gap: 6px; flex-wrap: wrap; align-items: center }
+.mgr .grp > .eyebrow { width: 100%; }
+.log { max-height: 640px; overflow-y: auto; display: grid; gap: 6px; padding-right: 4px }
+.ev { border-left: 3px solid var(--line); padding: 3px 0 3px 8px }
+.ev.run { border-left-color: var(--hit) }
+.ev .d { font-weight: 600 }
+.ev .uth { font: 11.5px/1.45 var(--font-mono); color: var(--muted); display: grid; gap: 1px; margin-top: 3px }
+.ev .uth .err, .ev .uth .warn { color: var(--warn) }
+.ev .uth .dice { color: var(--ink) }
+.ev.sub { border-left-color: var(--gold); font-style: italic; color: var(--muted) }
+.ev .inh { font: 700 12px var(--font-body); letter-spacing: 1px; text-transform: uppercase; color: var(--felt) }
+.ihead { font: 700 12px var(--font-body); letter-spacing: 1.2px; text-transform: uppercase; color: var(--felt); padding-top: 6px; border-top: 1px solid var(--line) }
+.hidden-uth .uth { display: none }
+.ctrl { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
+.wx { font-size: 13px; color: var(--muted) }
+.mini td, .mini th { padding: 2px 4px; font-size: 12.5px }
+.bracket { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); gap: 14px; overflow-x: auto }
+.ser { border: 1px solid var(--line); border-radius: 5px; background: var(--panel); padding: 8px; display: grid; gap: 4px; font-size: 14px }
+.ser .t { display: flex; justify-content: space-between; gap: 6px }
+.ser .t.win { font-weight: 700 }
+.schedule { display: grid; gap: 4px }
+.gline { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel) }
+.toast { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 5px; z-index: 50; font-weight: 600 }
+.loading { padding: 60px 0; text-align: center; color: var(--muted); font: 600 18px var(--font-display) }
+.hero { padding: 26px 0 6px; display: grid; gap: 8px; max-width: 760px }
+.hero p { font-size: 17px; margin: 0; color: var(--muted) }
+.modes { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px }
+.mode { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 8px; align-content: start }
+.mode h3 { font-size: 20px }
+.rules p { max-width: 75ch; margin: 0 0 8px }
+.rules h3 { margin: 14px 0 6px }
+.kv { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 2px 12px; font-size: 14px }
+@media (max-width: 980px) {
+  .table, .grid2 { grid-template-columns: minmax(0, 1fr) }
+  .bracket { grid-template-columns: repeat(4, 200px) }
+}
+@media (max-width: 600px) {
+  .cards2 { grid-template-columns: minmax(0, 1fr) }
+  .board { grid-template-columns: minmax(0, 1fr) }
+  .field { grid-template-columns: minmax(0, 1fr) }
+  .brand small { display: none }
+}
+@media (prefers-reduced-motion: no-preference) { .ev.new { animation: flash 1.2s ease-out } @keyframes flash { from { background: var(--hl) } to { background: transparent } } }
+
+/* ---------- game screen (v2) ---------- */
+:root { --grass: #2f7d45; --grass2: #3c9152; --dirt: #c08a55; --wall: #18301f; --bug: #10201a; --bug-ink: #f3f1e7; --gold2: #ffd36b }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --grass: #235f36; --grass2: #2c7041; --dirt: #8f6640; --wall: #0b1610; --bug: #0b1510 } }
+:root[data-theme="dark"] { --grass: #235f36; --grass2: #2c7041; --dirt: #8f6640; --wall: #0b1610; --bug: #0b1510 }
+.gm { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); grid-template-areas: "stage cards" "now cards" "lower lower"; gap: 14px; margin-top: 14px; align-items: start }
+.gm-stage { grid-area: stage; position: relative; background: var(--wall); border-radius: 8px; overflow: hidden; min-width: 0 }
+.gm-now { grid-area: now; display: grid; gap: 10px }
+.gm-cards { grid-area: cards; display: grid; gap: 10px; min-width: 0 }
+.gm-lower { grid-area: lower; min-width: 0 }
+.fieldwrap svg { display: block; width: 100%; height: auto; max-height: 62vh }
+.fl { font: 600 8.5px var(--font-body); fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,.55); stroke-width: 2.5px }
+.rl { font: 700 9px var(--font-body); fill: var(--gold2); paint-order: stroke; stroke: #000; stroke-width: 2.5px }
+.dist { font: 600 8px var(--font-mono); fill: rgba(255,255,255,.7) }
+.fx { font: 700 30px var(--font-display); fill: var(--gold2); paint-order: stroke; stroke: #000; stroke-width: 4px; transition: opacity .3s }
+.rn { transition: opacity .4s }
+.rn.outed { opacity: .25 }
+.rn.scored { opacity: 0 }
+.fd.glove circle { stroke: var(--gold2); stroke-width: 3 }
+.bug { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 8px; align-items: stretch; pointer-events: none; z-index: 2 }
+.bug-t, .bug-s, .bug-w { background: color-mix(in srgb, var(--bug) 88%, transparent); color: var(--bug-ink); border-radius: 5px; padding: 5px 8px }
+.bug-t { display: grid; gap: 2px; min-width: 96px }
+.bug-r { display: grid; grid-template-columns: 6px auto 1fr; gap: 6px; align-items: center; font-size: 14px }
+.bug-r.bat b::after { content: "\00a0\25CF"; color: var(--gold2); font-size: 9px; vertical-align: middle }
+.bug-r .sw { width: 6px; height: 16px; border-radius: 2px }
+.bug-n { text-align: right; font: 700 17px var(--font-mono); color: var(--gold2) }
+.bug-s { display: grid; place-items: center; gap: 4px }
+.bug-inn { font: 700 16px var(--font-display); color: var(--gold2) }
+.bug-w { margin-left: auto; font-size: 11px; line-height: 1.3; text-align: right; color: #c9d6cd; max-width: 46% }
+.outs i { width: 9px; height: 9px; border-width: 2px }
+.callout { position: absolute; left: 10px; right: 10px; bottom: 10px; background: color-mix(in srgb, var(--bug) 92%, transparent); color: var(--bug-ink); border-radius: 6px; padding: 8px 12px; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; pointer-events: none }
+.callout.show { opacity: 1; transform: none }
+.call-h { font: 700 22px/1.1 var(--font-display); letter-spacing: .5px }
+.call-h.good { color: #8ff0a8 } .call-h.bad { color: #e7ece8 } .call-h.hr { color: var(--gold2) }
+.call-r { font: 700 12px var(--font-body); background: var(--hit); color: #fff; border-radius: 3px; padding: 2px 6px; margin-left: 8px; vertical-align: middle; letter-spacing: .5px }
+.call-d { font-size: 13px; color: #c9d6cd; margin-top: 2px }
+.mu { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: start }
+.mu-vs { font: 700 13px var(--font-display); color: var(--muted); padding-top: 18px }
+.mu-n { font: 700 18px/1.15 var(--font-display) }
+.mu-s { font-size: 12.5px; color: var(--muted) }
+.mu-s b { color: var(--ink) } .mu-s b.hot { color: var(--hit) }
+.tray { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; border-top: 1px solid var(--line); padding-top: 10px }
+.dice.rolling .die { transform: rotate(8deg) }
+.dice .die { transition: transform .07s }
+.ticker { font: 12px/1.45 var(--font-mono); color: var(--muted); max-height: 128px; overflow-y: auto; display: grid; gap: 2px }
+.ticker .tk { animation: tkin .25s ease-out }
+.ticker .tk.res { color: var(--ink); font: 600 14px/1.4 var(--font-body) }
+.ticker .warn, .ticker .err { color: var(--warn) }
+@keyframes tkin { from { opacity: 0; transform: translateX(-4px) } to { opacity: 1; transform: none } }
+.ondeck { font-size: 12.5px }
+.ltabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 10px; overflow-x: auto }
+.ltabs button { background: none; border: none; border-bottom: 3px solid transparent; padding: 7px 10px; font-weight: 700; cursor: pointer; color: var(--muted); white-space: nowrap }
+.ltabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--felt) }
+.m-only { display: none }
+.lbody .log { max-height: 520px }
+.abar { position: sticky; bottom: 0; z-index: 15; margin-top: 14px; padding-bottom: env(safe-area-inset-bottom, 0px) }
+.abar-in { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px; box-shadow: 0 -4px 16px rgba(0,0,0,.12) }
+.btn.big { padding: 10px 26px; font-size: 16px; min-width: 110px }
+.spd { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center }
+.note { background: var(--hl); padding: 6px 10px; border-radius: 4px; margin: 0; font-size: 13px }
+.mgr label.fld { min-width: 0 }
+.wo { color: var(--felt); font-weight: 700 }
+.opts { gap: 10px 16px }
+.ls td, .ls th { padding: 3px 6px }
+@media (max-width: 980px) {
+  .gm { grid-template-columns: minmax(0, 1fr); grid-template-areas: "stage" "now" "lower" }
+  .gm-cards { display: none }
+  .m-only { display: inline-block }
+}
+@media (max-width: 600px) {
+  header.top .in { padding: 8px 12px; gap: 6px }
+  nav.tabs { flex-wrap: nowrap; overflow-x: auto; width: 100%; scrollbar-width: none; -webkit-overflow-scrolling: touch }
+  nav.tabs button { padding: 6px 10px; white-space: nowrap; flex: none }
+  .brand { font-size: 19px }
+  .wrap { padding-inline: 10px }
+  .gm { gap: 10px; margin-top: 10px }
+  .bug-w { display: none }
+  .call-h { font-size: 18px }
+  .mu { grid-template-columns: minmax(0, 1fr); gap: 6px }
+  .mu-vs { display: none }
+  .mu-n { font-size: 16px }
+  .tray { grid-template-columns: minmax(0, 1fr) }
+  .die { width: 28px; height: 28px; font-size: 14px }
+  .abar-in { flex-wrap: nowrap; overflow-x: auto; padding: 6px; gap: 6px }
+  .abar-in .btn { flex: none; padding: 8px 10px; font-size: 14px }
+  .btn.big { min-width: 92px; font-size: 16px }
+  .spd { margin-left: 0 }
+  .spd span { display: none }
+  .panel { padding: 11px }
+  .gline { grid-template-columns: minmax(0, 1fr) auto; }
+  .gline > span:last-child:empty { display: none }
+  h1 { font-size: 25px } h2 { font-size: 19px }
+  .cgrid { font-size: 9.6px }
+  .pgrid { font-size: 9.6px }
+  .card .meta { font-size: 11px }
+}
+
+/* ---------- board-game chart pulls + scorebook ---------- */
+.chartslot:empty { display: none }
+.chartslot { border-top: 1px solid var(--line); padding-top: 10px }
+.chartslot.pulled > * { animation: pull .35s cubic-bezier(.2,.8,.2,1) }
+@keyframes pull { from { opacity: 0; transform: translateY(18px) scale(.97) } to { opacity: 1; transform: none } }
+.chart { background: var(--paper); border: 1px solid var(--line); border-radius: 5px; overflow: hidden }
+.chart-t { background: var(--felt); color: var(--felt-ink); font: 700 12px var(--font-body); letter-spacing: .6px; text-transform: uppercase; padding: 5px 10px }
+.chart-b { max-height: 230px; overflow: auto }
+.chart table td, .chart table th { font: 12px var(--font-mono); padding: 3px 8px; text-align: left; white-space: normal }
+.chart tr.hl td { background: var(--hl) !important; font-weight: 700 }
+.chart td.hc { outline: 2px solid var(--gold); outline-offset: -2px }
+.chart .col { background: color-mix(in srgb, var(--hl) 35%, transparent) }
+.chart-n { font: 12px var(--font-mono); padding: 5px 10px; border-top: 1px solid var(--line); color: var(--muted) }
+.slotcard { max-height: 320px; overflow: auto }
+.card.flash { animation: cflash 1s ease-out }
+@keyframes cflash { from { box-shadow: 0 0 0 4px var(--gold) } to { box-shadow: 0 0 0 0 transparent } }
+@media (min-width: 981px) { .slotcard { display: none } }
+.stepchk { font-size: 13px; white-space: nowrap; flex: none }
+textarea#exporttext { width: 100%; min-height: 320px; font: 12px var(--font-mono); background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px; margin-top: 8px }
+.gline.rec { grid-template-columns: minmax(0, 1fr) auto }
+pre.gametext { grid-column: 1 / -1; font: 11.5px/1.4 var(--font-mono); background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 10px; overflow-x: auto; max-height: 520px; margin: 6px 0 0 }
+</style>
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="#/">◆ Diamond Sim</a>
-  <nav id="nav">
-    <a href="#/game" data-r="game">Play a game</a>
-    <a href="#/post" data-r="post">Postseason replay</a>
-    <a href="#/season" data-r="season">Season</a>
-    <a href="#/custom" data-r="custom">Custom league</a>
-    <a href="#/live" data-r="live" class="livelink">● Live 2026</a>
-    <a href="#/saves" data-r="saves">Saved</a>
-    <a href="#/stats" data-r="stats">Stats &amp; logs</a>
+<header class="top"><div class="in">
+  <div class="brand">Box Seat Baseball<small>Under The Hood &middot; 2025</small></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="home">Home</button>
+    <button data-tab="game">Game</button>
+    <button data-tab="season">Season</button>
+    <button data-tab="post">Postseason</button>
+    <button data-tab="exh">Exhibition</button>
+    <button data-tab="hist">Real Games</button>
+    <button data-tab="records">Scorebook</button>
+    <button data-tab="cards">Cards</button>
+    <button data-tab="rules">Rules</button>
   </nav>
-  <button id="acct" aria-label="Account">☁</button>
-</header>
-<main id="app"><p class="muted pad">Loading…</p></main>
-<footer class="foot">
-  Data: <a href="https://www.retrosheet.org" target="_blank" rel="noopener">Retrosheet</a> — the information used here was obtained free of charge from and is copyrighted by Retrosheet. Interested parties may contact Retrosheet at 20 Sunset Rd., Newark, DE 19711.
-</footer>
-<script type="module" src="web/js/app.js"></script>
+</div></header>
+<main class="wrap" id="main"><div class="loading">Shuffling the 2025 card set…</div></main>
+<script src="charts.js" charset="utf-8"></script>
+<script src="engine.js" charset="utf-8"></script>
+<script src="wild.js" charset="utf-8"></script>
+<script src="ai.js" charset="utf-8"></script>
+<script src="app.js" charset="utf-8"></script>
+
+<script>if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));</script>
 </body>
 </html>
