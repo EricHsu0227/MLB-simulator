@@ -703,14 +703,15 @@ function diceFaces(d) {
   if (!d) d = { w: '–', b: '–', r: '–', g: '–', p: null };
   return `<span class="die w" title="White die">${d.w}</span><span class="die b" title="Black die">${d.b}</span><span class="die rd" title="Red die">${d.r}</span><span class="die gr" title="Green die">${d.g}</span><span class="die pd" title="Pitcher die">${d.p == null ? '–' : C.pdie[d.p]}</span>`;
 }
-function cardsHtml(g, cell, pcell, bcidOverride, pcidOverride) {
+function cardsHtml(g, cell, pcell, bcidOverride, pcidOverride, fatOverride) {
   if (g.over && bcidOverride == null) return `<div class="panel muted">Game over.</div>`;
   const bcid = bcidOverride != null ? bcidOverride : g.batterCid();
   const pcid = pcidOverride != null ? pcidOverride : g.def.pitcher;
   const pc = D.cards[pcid];
   let c = D.cards[bcid]; if (c.t === 'P') c = g.genericFor(c);
   if (cell === undefined) { const last = g.plays.length ? g.plays[g.plays.length - 1] : null; cell = last && last.batter === bcid ? last.cell : null; pcell = last && last.pitcher === pcid && last.batter === bcid ? last.pcell : null; }
-  return batterCard(c, pc.th, cell, null) + pitcherCard(pc, pcell, g.teams.find(T => T.pitcher === pcid) ? g.teams.find(T => T.pitcher === pcid).fatigue[pcid] : null);
+  const fat = fatOverride != null ? fatOverride : (g.teams.find(T => T.pitcher === pcid) ? g.teams.find(T => T.pitcher === pcid).fatigue[pcid] : null);
+  return batterCard(c, pc.th, cell, null) + pitcherCard(pc, pcell, fat);
 }
 function lineScore(g) {
   const n = Math.max(9, g.line[0].length, g.line[1].length);
@@ -885,22 +886,23 @@ function showChart(ch, ev, g, pre) {
     return;
   }
   const isB = ch.k === 'bcard';
-  if (cb) { cb.innerHTML = cardsHtml(g, ev.cell, isB ? null : ev.pcell, pre.batter, ev.pitcher); const el = cb.querySelectorAll('.card')[isB ? 0 : 1]; if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } }
+  if (cb) { cb.innerHTML = cardsHtml(g, ev.cell, isB ? null : ev.pcell, pre.batter, ev.pitcher, pre.fat); const el = cb.querySelectorAll('.card')[isB ? 0 : 1]; if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } }
   if (slot) {
     let c = D.cards[pre.batter]; if (c.t === 'P') c = g.genericFor(c);
     const pc = D.cards[ev.pitcher];
-    slot.innerHTML = `<div class="slotcard">${isB ? batterCard(c, pc.th, ev.cell) : pitcherCard(pc, ev.pcell)}</div>`;
+    slot.innerHTML = `<div class="slotcard">${isB ? batterCard(c, pc.th, ev.cell) : pitcherCard(pc, ev.pcell, pre.fat)}</div>`;
     slot.classList.add('pulled');
     const act = slot.querySelector('.act'); if (act) { const sc = slot.querySelector('.slotcard'); if (sc) sc.scrollTop = Math.max(0, act.offsetTop - 80); }
   }
 }
-function stepLabel(l, first) {
-  if (first) return 'Roll the dice';
-  const t = l[1]; const ch = l[2];
-  if (/red die|re-?roll|roll \d|Roll /i.test(t) && !/^Dice/.test(t)) return 'Roll';
-  if (ch && ch.k === 'pcard') return 'Pitcher card';
-  if (ch && ch.k === 't') return 'Pull up chart';
-  return 'Next';
+const ROLL_RE = /(;|,)?\s*(red die \d|green die \d|black die \d|re-?roll|roll \d|Roll \d)/i;
+function splitRoll(text) {
+  // returns [setup, full] when the line contains a new roll, else null
+  if (/^Dice:/.test(text)) return null;
+  if (/^OF CK \(/.test(text)) return ['OF CK range check — roll green and red', text];
+  const m = text.match(ROLL_RE);
+  if (!m || m.index < 4) return m ? [text.split(':')[0] + ' — roll', text] : null;
+  return [text.slice(0, m.index).replace(/[\s:;,→-]+$/, ''), text];
 }
 function waitStep(label) {
   const GS = st.game;
@@ -908,20 +910,34 @@ function waitStep(label) {
   const pb = $('#pitchbtn'); if (pb) pb.textContent = label;
   return new Promise(res => { GS.waiter = () => { GS.waiter = null; res(); }; });
 }
+const hideHl = (ch) => ch && ch.k === 't' ? Object.assign({}, ch, { hr: -1, hc: null, note: '' }) : ch;
 async function tickerLines(ev, sp, pre, g) {
   const tk = $('#ticker'); if (!tk) return;
   tk.innerHTML = '';
   const lines = (ev.lines || []).filter(l => !String(l[0]).startsWith('res') && l[0] !== 'end');
+  const steps = st.prefs.stepMode && !st.game.auto;
   let first = true;
   for (const l of lines) {
     const isDice = l[0] === 'dice';
-    const w = waitStep(stepLabel(l, isDice && first)); if (w) await w;
-    if (isDice) await rollDice(ev, sp);
+    const div = document.createElement('div'); div.className = 'tk ' + (l[0] || '');
+    if (isDice) {
+      // the button press that started this at-bat is the dice roll
+      if (!first) { const w = waitStep('Roll the dice'); if (w) await w; }
+      await rollDice(ev, sp);
+    } else if (steps) {
+      const sp2 = splitRoll(l[1]);
+      if (sp2) {
+        const w = waitStep('Next'); if (w) await w;
+        div.textContent = sp2[0] + ' …'; tk.appendChild(div); tk.scrollTop = tk.scrollHeight;
+        if (l[2]) showChart(hideHl(l[2]), ev, g, pre);
+        const w2 = waitStep('Roll'); if (w2) await w2;
+      } else { const w = waitStep('Next'); if (w) await w; }
+    }
     first = false;
-    const div = document.createElement('div'); div.className = 'tk ' + (l[0] || ''); div.textContent = l[1]; tk.appendChild(div);
+    div.textContent = l[1]; if (!div.parentNode) tk.appendChild(div);
     tk.scrollTop = tk.scrollHeight;
     if (l[2]) showChart(l[2], ev, g, pre);
-    if (!st.prefs.stepMode || st.game.auto) await sleep(Math.min(700, 220 + l[1].length * 5) * sp * (l[2] ? 1.6 : 1));
+    if (!steps) await sleep(Math.min(700, 220 + l[1].length * 5) * sp * (l[2] ? 1.6 : 1));
   }
 }
 async function rollDice(ev, sp) {
@@ -939,9 +955,9 @@ async function animateEvent(ev, pre, g) {
   const fw = $('#fieldwrap'); if (fw) fw.innerHTML = fieldSvg(g, pre);
   const co = $('#callout'); if (co) co.classList.remove('show');
   const slot = $('#chartslot'); if (slot) { slot.innerHTML = ''; slot.classList.remove('pulled'); } st.game.lastChart = '';
-  const cb = $('#cardsbox'); if (cb && ev.type === 'PA' && pre.batter != null) cb.innerHTML = cardsHtml(g, null, null, pre.batter, ev.pitcher);
+  const cb = $('#cardsbox'); if (cb && ev.type === 'PA' && pre.batter != null) cb.innerHTML = cardsHtml(g, null, null, pre.batter, ev.pitcher, pre.fat);
   await tickerLines(ev, sp, pre, g);
-  const w = waitStep('Play it out'); if (w) await w;
+  const w = waitStep('Next'); if (w) await w;
   if (ev.type === 'PA' && ev.ball) await animateBall(ev.ball, g, sp);
   await animateRunners(ev, pre, g, sp);
   await sleep(250 * sp);
@@ -951,7 +967,7 @@ async function playStep() {
   const GS = st.game; if (!GS) return; const g = GS.g;
   if (GS.busy) { if (GS.waiter) { GS.waiter(); return; } skipAnim(); return; }
   if (g.over) return;
-  const pre = { bases: g.bases.map(r => r ? r.cid : null), batter: g.batterCid(), defSide: 1 - g.half };
+  const pre = { bases: g.bases.map(r => r ? r.cid : null), batter: g.batterCid(), defSide: 1 - g.half, fat: g.def.fatigue[g.def.pitcher] };
   const n0 = g.log.length;
   const userDec = Object.keys(GS.dec).length ? GS.dec : null;
   AI.aiStep(g, userDec); GS.dec = {};
