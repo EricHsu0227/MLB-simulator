@@ -392,7 +392,7 @@ function act(a, el, e0) {
     }
     case 'hist-more': st.histLimit = (st.histLimit || 60) + 120; render(); return;
     // ----- season -----
-    case 'season-new': { newSeason($('#sasp') ? $('#sasp').checked : false); render(); return; }
+    case 'season-new': { newSeason(false); render(); return; }
     case 'season-reset': { if (el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to start over (finished games stay in the Scorebook)'; return; } S = null; store.del('bsb-season'); st.recs = null; render(); return; }
     case 'season-sim': { const n = +v; el.disabled = true; simSeasonGames(n === 0 ? 99999 : n, null, render); return; }
     case 'season-simday': { const d = D.gamesById[S.sched[S.next]].d; simSeasonGames(99999, d, render); return; }
@@ -402,7 +402,7 @@ function act(a, el, e0) {
     case 'lg': st.leaderLg = v; render(); return;
     case 'season-to-post': { P = newPost(seedsFromSeason(), { asPlayed: false, from: 'season' }); savePost(); st.tab = 'post'; render(); return; }
     // ----- postseason -----
-    case 'post-new': { P = newPost(REAL_SEEDS, { asPlayed: $('#pasp').checked, from: String(SEASON) }); savePost(); render(); return; }
+    case 'post-new': { P = newPost(REAL_SEEDS, { asPlayed: true, from: String(SEASON) }); savePost(); render(); return; }
     case 'post-reset': { if (el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to erase'; return; } P = null; store.del('bsb-post'); st.recs = null; render(); return; }
     case 'post-play': { const s = P.series.find(x => x.id === v); const gs = seriesGameSetup(s, P); startGame(gs.setup, { kind: 'post', sid: s.id, user: $('#puser').value === 'both' ? 'both' : ($('#puser').value === 'hi' ? (gs.homeIsHi ? 'home' : 'away') : $('#puser').value === 'lo' ? (gs.homeIsHi ? 'away' : 'home') : 'none') }); return; }
     case 'post-sim': { const s = P.series.find(x => x.id === v); simSeriesGame(s, P); advancePost(P); savePost(); render(); return; }
@@ -463,7 +463,7 @@ function act(a, el, e0) {
         if ([hi, lo].some(k => D.teams[k].stub)) { const keep = { r: round, u: $('#oneuser').value }; mixEnsure([hi, lo]).then(() => { render(); $('#onepick').value = 'custom'; act('one-new', el); }); return; } }
       else { const r = realSeries().find(x => x.key === pick); hi = r.hi; lo = r.lo; round = r.ty; }
       const best = { WC: 3, DS: 5, LCS: 7, WS: 7 }[round];
-      st.one = { from: 'one', asPlayed: pick !== 'custom' && $('#oneasp').checked, opts: readOpts(), plog: {}, rot: {}, user: $('#oneuser').value,
+      st.one = { from: 'one', asPlayed: pick !== 'custom', opts: readOpts(), plog: {}, rot: {}, user: $('#oneuser').value,
         series: [{ id: 'ONE', round, best, hi, lo, lg: 'MLB', wins: { [hi]: 0, [lo]: 0 }, games: [], winner: null }] };
       store.set('bsb-one', st.one); render(); return;
     }
@@ -490,9 +490,12 @@ function chg(k, el) {
   if (k === 'speed') { st.prefs.speed = el.value; store.set('bsb-prefs', st.prefs); }
   if (k === 'rec-scope') { st.recScope = el.value; render(); }
   if (k === 'rec-team') { st.recTeam = el.value; render(); }
+  if (k === 'asp') { const on = el.checked; if (el.dataset.k === 'S' && S) { S.asPlayed = on; store.set('bsb-season', S); } if (el.dataset.k === 'P' && P) { P.asPlayed = on; savePost(); } if (el.dataset.k === 'O' && st.one) { st.one.asPlayed = on; store.set('bsb-one', st.one); } toast(on ? 'Next games use as-played lineups' : 'Next games use manager AI lineups'); }
   if (k === 'plq') { st.plq = el.value; render(); const q = $('#plq'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   if (k === 'one-pick') { st.onePick = el.value; render(); }
 }
+// as-played lineups are chosen right before each game, not when the season or bracket is created
+const aspToggle = (k, on, what) => `<label class="chk" style="margin:4px 0"><input type="checkbox" data-chg="asp" data-k="${k}" ${on ? 'checked' : ''}> As-played lineups for ${what} <span class="muted">(real lineups, starters, bullpen order and weather; off = manager AI)</span></label>`;
 function readOpts() { const p = st.prefs; return { fatigue: p.fatigue, wildPlays: p.wildPlays, bpEffects: p.bpEffects, autoRunner: p.autoRunner }; }
 const FATIGUE_OPTS = [['L1', 'Level 1 fatigue'], ['L2', 'Level 2 fatigue'], ['L2H', 'Level 2, relievers' + "'" + ' rating halved']];
 const optsBlock = () => { const p = st.prefs; return `<div class="row opts"><label class="fld">Pitcher fatigue <select data-chg="pref" data-k="fatigue">${FATIGUE_OPTS.map(([v, l]) => `<option value="${v}" ${p.fatigue === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -1310,7 +1313,7 @@ function leadersHtml(stt, lg, gamesPlayed) {
 }
 function vSeason() {
   if (!S) return `<div class="section"><div class="panel"><h2>${SEASON} season replay</h2><p class="muted">Replays all ${D.games.filter(g => g.ty === 'r').length.toLocaleString()} games of the real ${SEASON} schedule in order. Simulate a day, a week or the whole year, or step in and manage any game yourself. Your season is saved in this browser.</p>
-    <label class="chk" style="margin-top:10px"><input type="checkbox" id="sasp"> Use as-played lineups (real starting lineups, starting pitchers, reliever order and weather from every game)</label>
+
     <p class="muted" style="font-size:13px">Without it, each club uses its most common ${SEASON} lineup against the opposing starter's hand, a five-man rotation that needs four days of rest, and weather rolled from the ballpark card.</p>
     <div style="margin-top:10px">${optsBlock()}</div>
     <div class="row" style="margin-top:10px"><button class="btn go" data-act="season-new">Start the season</button></div></div></div>`;
@@ -1327,7 +1330,7 @@ function vSeason() {
     const recent = S.sched.slice(Math.max(0, S.next - 60), S.next).reverse().map(id => D.gamesById[id]).filter(g => S.res[g.id]);
     body = `<div class="schedule">${recent.map(g => { const r = S.res[g.id]; return `<div class="gline"><span><span class="muted">${fmtDate(g.d)}</span> · <b>${team(g.v).abbr} ${r.sc[0]} @ ${team(g.h).abbr} ${r.sc[1]}</b>${r.inn > 9 ? ` (${r.inn})` : ''} <span class="muted">W ${esc(tn(r.w))}${r.l != null ? ' · L ' + esc(tn(r.l)) : ''}${r.s != null ? ' · SV ' + esc(tn(r.s)) : ''}</span></span><span class="muted" style="font-size:12px">Real: ${g.sc[0]}-${g.sc[1]}</span><span></span></div>`; }).join('') || '<p class="muted">No games played yet.</p>'}</div>`;
   }
-  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${S.asPlayed ? 'As-played lineups' : 'Manager AI lineups'}</div><h2>${SEASON} season replay</h2></div>
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><h2>${SEASON} season replay</h2>${aspToggle('S', S.asPlayed, 'the next games')}</div>
     <button class="btn sm" data-act="season-reset">Erase season</button></div>
     <p id="simprog" class="muted">${done ? 'Regular season complete.' : `Next up: ${fmtDate(nextRef.d)} · ${played} of ${S.sched.length} games played`}</p>
     ${!done ? `<div class="row"><button class="btn" data-act="season-simday">Sim this day</button><button class="btn" data-act="season-simweek">Sim a week</button><button class="btn" data-act="season-sim" data-v="0">Sim to end of season</button></div>` : `<div class="row"><button class="btn go" data-act="season-to-post">Start postseason from these standings</button></div>`}
@@ -1341,11 +1344,11 @@ function vSeason() {
 // ---------- postseason ----------
 function vPost() {
   if (!P) return `<div class="section"><div class="panel"><h2>${SEASON} postseason</h2><p class="muted">The real ${SEASON} seeds: ${REAL_SEEDS.AL.map(c => esc(tName(c))).join(', ')} in the American League; ${REAL_SEEDS.NL.map(c => esc(tName(c))).join(', ')} in the National League.${SEASON < 2022 ? ' This table plays every season in today\'s 12-team format; seasons with fewer playoff clubs are filled out with the next-best records.' : ''}${S && S.next >= S.sched.length ? ' Your finished season replay can seed its own bracket from the Season tab.' : ''}</p>
-    <label class="chk" style="margin-top:8px"><input type="checkbox" id="pasp" checked> Use as-played lineups whenever the real series had that game</label>
+
     <div style="margin-top:10px">${optsBlock()}</div>
     <div class="row" style="margin-top:10px"><button class="btn go" data-act="post-new">Open the bracket</button></div></div>${oneSeriesHtml()}</div>`;
   const col = (r, title) => `<div style="display:grid;gap:10px;align-content:start"><div class="eyebrow">${title}</div>${P.series.filter(s => s.round === r).map(serBox).join('')}</div>`;
-  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${P.from === 'season' ? 'Seeded from your season replay' : 'Real ' + SEASON + ' seeds'}${P.asPlayed ? ' · as-played lineups' : ''}</div><h2>${P.champ ? esc(tName(P.champ)) + ' win the World Series' : 'Postseason bracket'}</h2></div>
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">${P.from === 'season' ? 'Seeded from your season replay' : 'Real ' + SEASON + ' seeds'}</div>${aspToggle('P', P.asPlayed, 'the next games, when the real series had that game')}<h2>${P.champ ? esc(tName(P.champ)) + ' win the World Series' : 'Postseason bracket'}</h2></div>
     <div class="row"><label class="fld">You manage <select id="puser"><option value="none">Nobody</option><option value="hi">Higher seed</option><option value="lo">Lower seed</option><option value="both">Both</option></select></label>
     ${!P.champ ? `<button class="btn" data-act="post-simround">Sim this round</button><button class="btn" data-act="post-simall">Sim the rest</button>` : ''}<button class="btn sm" data-act="post-reset">Erase bracket</button></div></div></div>
     <div class="bracket">${col('WC', 'Wild Card · best of 3')}${col('DS', 'Division Series · best of 5')}${col('LCS', 'LCS · best of 7')}${col('WS', 'World Series · best of 7')}</div>${oneSeriesHtml()}</div>`;
@@ -1684,7 +1687,7 @@ function oneSeriesHtml() {
   if (O) {
     const s = O.series[0]; const over = seriesOver(s);
     const winner = over ? ((s.wins[s.hi] || 0) > (s.wins[s.lo] || 0) ? s.hi : s.lo) : null;
-    return `<div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">Single series · ${TYN[s.round]} · best of ${s.best}${O.asPlayed ? ' · as-played lineups' : ''}</div>
+    return `<div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">Single series · ${TYN[s.round]} · best of ${s.best}</div>${O.series[0].hi && /^\d{4}-/.test(O.series[0].hi) ? '' : aspToggle('O', O.asPlayed, 'the next game, when the real game exists')}
       <h2>${esc(tName(s.lo))} vs ${esc(tName(s.hi))}</h2></div><button class="btn sm" data-act="one-reset">New series</button></div>
       <p><b>${team(s.hi).abbr} ${s.wins[s.hi] || 0}, ${team(s.lo).abbr} ${s.wins[s.lo] || 0}</b>${winner ? ` — ${esc(tName(winner))} win the series` : ''}</p>
       <div class="schedule">${s.games.map((g, i) => `<div class="gline"><span>Game ${i + 1}: ${team(g.v).abbr} ${g.sc[0]} @ ${team(g.h).abbr} ${g.sc[1]}</span><span class="tag">${team(g.w).abbr}</span><span></span></div>`).join('')}</div>
@@ -1695,7 +1698,7 @@ function oneSeriesHtml() {
     <div class="row" style="align-items:end;margin-top:8px"><label class="fld">Series <select id="onepick" data-chg="one-pick">${rs.map(r => `<option value="${r.key}" ${pick === r.key ? 'selected' : ''}>${r.ty} · ${esc(team(r.lo).abbr)} vs ${esc(team(r.hi).abbr)} (real: ${Object.entries(r.w).map(([c, n]) => team(c).abbr + ' ' + n).join('-')})</option>`).join('')}<option value="custom" ${pick === 'custom' ? 'selected' : ''}>Custom matchup…</option></select></label>
     ${pick === 'custom' ? `<label class="fld">Home field ${teamSelect('onehi', 'LAN')}</label><label class="fld">Opponent ${teamSelect('onelo', 'NYA')}</label><label class="fld">Format <select id="oneround"><option value="WC">Wild Card (best of 3)</option><option value="DS">Division Series (5)</option><option value="LCS">LCS (7)</option><option value="WS" selected>World Series (7)</option></select></label>` : ''}
     <label class="fld">You manage <select id="oneuser"><option value="none">Nobody</option><option value="hi">Home-field team</option><option value="lo">Other team</option><option value="both">Both</option></select></label>
-    <label class="chk"><input type="checkbox" id="oneasp" checked> As-played lineups when the real game exists</label></div>
+</div>
     <div style="margin-top:8px">${optsBlock()}</div>
     <div class="row" style="margin-top:10px"><button class="btn go" data-act="one-new">Start series</button></div></div>`;
 }
