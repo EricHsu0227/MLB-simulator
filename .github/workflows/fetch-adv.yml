@@ -1,0 +1,21 @@
+name: Fetch advanced stats
+on:
+  push:
+    branches: [data-2026]
+    paths: [fetch_adv.py, .github/workflows/fetch-adv.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  adv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 fetch_adv.py
+      - run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add adv
+          git commit -m "advanced stats" || echo nothing
+          git push
