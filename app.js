@@ -7,10 +7,11 @@ let D = null;
 const SEASONS = Array.from({ length: 17 }, (_, i) => 2010 + i);
 // SEASON = the year used by season replay, postseason and real games (picked inside those tabs).
 // Every other team picker chooses a year and a club, so clubs from different seasons can meet.
-const SEASON = (() => { try { const v = +localStorage.getItem('bsb-yr'); return SEASONS.includes(v) ? v : 2025; } catch (e) { return 2025; } })();
+let SEASON = (() => { try { const v = +localStorage.getItem('bsb-yr'); return SEASONS.includes(v) ? v : 2025; } catch (e) { return 2025; } })();
 const MIX = true;
 const YR0 = SEASON;
-const MIXGLOBAL = ['bsb-tour', 'bsb-exh'];
+const MIXGLOBAL = ['bsb-tour', 'bsb-exh', 'bsb-live', 'bsb-modeyr'];
+const BASEKINDS = ['season', 'post', 'one', 'hist'];
 const skey = (k) => MIXGLOBAL.includes(k) ? k + '-mix' : (SEASON === 2025 || k === 'bsb-prefs') ? k : k + '-' + SEASON;
 const st = { prefs: null, tab: 'home', game: null, showUth: true, histFilter: { team: '', type: '', q: '' }, cardsTeam: 'NYA', exh: { away: 'LAN', home: 'NYA', n: 1, user: 'home', asPlayed: false }, seasonView: 'standings', leaderLg: 'AL' };
 const store = {
@@ -57,7 +58,8 @@ document.addEventListener('keydown', e => { if (st.tab === 'game' && (e.code ===
 fetch(SEASON === 2025 ? 'bsb.json' : `seasons/bsb-${SEASON}.json`).then(r => r.json()).then(d => { D = d; if (D.seeds) REAL_SEEDS = D.seeds; D.gamesById = {}; D.games.forEach(g => D.gamesById[g.id] = g); return mixBoot(); })
   .catch(e => { main.innerHTML = `<div class="loading">Couldn't load the card data (${esc(e.message)}). Reload the page to try again.</div>`; });
 
-$('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) { st.tab = b.dataset.tab; render(); window.scrollTo(0, 0); } });
+function goTab(t) { st.tab = t; const y = ['season', 'post', 'hist'].includes(t) && st.modeYr && st.modeYr[t]; if (y && y !== SEASON) switchSeason(y); else render(); window.scrollTo(0, 0); }
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) goTab(b.dataset.tab); });
 try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') ARC.flush(); });
 addEventListener('pagehide', () => ARC.flush());
@@ -79,7 +81,39 @@ function mixBoot() {
     loadState();
     st.cardsTeam = mixKey(st.cardsTeam); st.exh.away = mixKey(st.exh.away); st.exh.home = mixKey(st.exh.home);
     return mixEnsure(mixNeeded());
-  }).then(render);
+  }).then(restoreLive).then(render);
+}
+// change the replay season in place (season replay, postseason, real games); nothing else on screen changes
+function switchSeason(yr) {
+  yr = +yr; if (yr === SEASON) { render(); return Promise.resolve(); }
+  if (st.game && !st.game.g.over && BASEKINDS.includes(st.game.ctx.kind)) { saveLive(true); st.game = null; }
+  main.innerHTML = `<div class="loading">Loading the ${yr} season…</div>`;
+  return fetch(yr === 2025 ? 'bsb.json' : `seasons/bsb-${yr}.json`).then(r => r.json()).then(d => {
+    Object.keys(D.teams).forEach(k => { if (!D.teams[k].yr) delete D.teams[k]; });
+    Object.keys(D.parks).forEach(k => { if (!/^\d{4}-/.test(k)) delete D.parks[k]; });
+    for (let i = 0; i < MIX_BASE(2010); i++) if (D.cards[i] !== undefined) delete D.cards[i];
+    d.cards.forEach((c, i) => { D.cards[i] = c; });
+    Object.assign(D.teams, d.teams); Object.assign(D.parks, d.parks);
+    D.games = d.games; D.gen = d.gen; D.r2c = d.r2c; D.pnames = d.pnames; D.seeds = d.seeds; D.post = d.post; D.dh = d.dh; D.season = d.season;
+    if (d.seeds) REAL_SEEDS = d.seeds;
+    D.gamesById = {}; D.games.forEach(g => D.gamesById[g.id] = g);
+    SEASON = yr; try { localStorage.setItem('bsb-yr', String(yr)); } catch (e) {}
+    S = store.get('bsb-season'); P = store.get('bsb-post'); st.one = store.get('bsb-one');
+    st.histFilter = { team: '', type: '', q: '' }; st.onePick = null;
+    return restoreLive();
+  }).then(render).catch(e => { toast('Could not load ' + yr + ': ' + e.message); render(); });
+}
+function savedReplays() {
+  const out = [];
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); const m = k && k.match(/^bsb-season(?:-(\d{4}))?$/); if (!m) continue;
+    const S0 = JSON.parse(localStorage.getItem(k)); if (S0 && S0.sched) out.push({ yr: m[1] ? +m[1] : 2025, done: S0.next, n: S0.sched.length }); } } catch (e) {}
+  return out.sort((a, b) => b.yr - a.yr);
+}
+function modeBar(tab) {
+  const lab = { season: 'Season replay', post: 'Postseason', hist: 'Real games' }[tab];
+  const reps = tab === 'season' ? savedReplays().filter(r => r.yr !== SEASON) : [];
+  return `<div class="section"><div class="panel row" style="align-items:center;gap:10px;flex-wrap:wrap"><b>${lab} · season</b><select data-chg="mode-yr" data-tab="${tab}">${yrOptions(SEASON)}</select>
+    ${reps.length ? `<span class="muted">Your other replays:</span>${reps.map(r => `<button class="btn sm" data-act="open-yr" data-v="${r.yr}" data-tab="${tab}">${r.yr} · ${r.done}/${r.n} games</button>`).join('')}` : ''}</div></div>`;
 }
 function mixNeeded() {
   const k = [st.cardsTeam, st.exh.away, st.exh.home];
@@ -118,7 +152,7 @@ function render() {
   if (!D) return;
   if (MIX) { const need = mixNeeded().filter(k => D.teams[k] && D.teams[k].stub); if (need.length) { mixEnsure(need).then(render); return; } }
   const v = { player: vPlayer, tour: vTour, records: vRecords, home: vHome, game: vGame, season: vSeason, post: vPost, exh: vExh, hist: vHist, cards: vCards, rules: vRules }[st.tab] || vHome;
-  const bar = ['season', 'post', 'hist'].includes(st.tab) ? `<div class="section"><div class="panel row" style="align-items:center;gap:10px"><b>Season</b><select data-chg="replay-yr">${yrOptions(SEASON)}</select><span class="muted">Season replay, postseason and real games use this year's schedule and card set.</span></div></div>` : '';
+  const bar = ['season', 'post', 'hist'].includes(st.tab) ? modeBar(st.tab) : '';
   main.innerHTML = bar + v();
   if (st.game && !st.game.busy) saveLive();
   if (st.tab === 'game') { const l = $('.log'); if (l) l.scrollTop = 0; }
@@ -130,14 +164,20 @@ function render() {
 let S = null, P = null;
 function loadState() {
   S = store.get('bsb-season'); P = store.get('bsb-post'); st.one = store.get('bsb-one'); st.exhSeries = store.get('bsb-exh'); st.tour = store.get('bsb-tour');
-  const L = store.get('bsb-live');
-  if (L && L.g) { try { st.game = { g: B.Game.restore(D, L.g), ctx: L.ctx, dec: {}, lowerTab: L.lowerTab, lastCall: L.lastCall, timers: [], resumed: true }; } catch (e) { store.del('bsb-live'); } }
+  st.modeYr = store.get('bsb-modeyr') || {};
+}
+// a saved game in progress comes back once the cards it uses are loaded; a replay-season game only in its own season
+function restoreLive() {
+  const L = store.get('bsb-live'); if (!L || !L.g) return Promise.resolve();
+  if (L.ctx && BASEKINDS.includes(L.ctx.kind) && (L.yr || 2025) !== SEASON) return Promise.resolve();
+  const keys = [...new Set((JSON.stringify(L.g).match(/"\d{4}-[A-Z]{2,3}"/g) || []).map(x => x.slice(1, -1)))].filter(k => D.teams[k]);
+  return mixEnsure(keys).then(() => { try { st.game = { g: B.Game.restore(D, L.g), ctx: L.ctx, dec: {}, lowerTab: L.lowerTab, lastCall: L.lastCall, timers: [], resumed: true }; } catch (e) { } });
 }
 let saveT = null;
 function saveLive(now) {
   const GS = st.game; if (!GS) return;
   if (GS.g.over) { store.del('bsb-live'); return; }
-  const doSave = () => { saveT = null; store.set('bsb-live', { g: GS.g, ctx: GS.ctx, lowerTab: GS.lowerTab, lastCall: GS.lastCall, ts: Date.now() }); };
+  const doSave = () => { saveT = null; store.set('bsb-live', { g: GS.g, ctx: GS.ctx, lowerTab: GS.lowerTab, lastCall: GS.lastCall, ts: Date.now(), yr: SEASON }); };
   if (now) { if (saveT) clearTimeout(saveT); doSave(); } else if (!saveT) saveT = setTimeout(doSave, 250);
 }
 addEventListener('pagehide', () => saveLive(true));
@@ -309,7 +349,7 @@ function act(a, el, e0) {
   const GS = st.game, g = GS && GS.g;
   const v = el.dataset.v;
   switch (a) {
-    case 'tab': st.tab = v; render(); window.scrollTo(0, 0); return;
+    case 'tab': goTab(v); return;
     case 'pa': return playStep();
     case 'skip': skipAnim(); return;
     case 'auto': { GS.auto = !GS.auto; if (GS.auto && !GS.busy) playStep(); else render(); return; }
@@ -410,6 +450,7 @@ function act(a, el, e0) {
     case 'rec-pbp': { const r = (st.recs || []).find(x => x.id === v); if (r) offerFile(fileBase(r) + '-pbp.csv', pbpCSV([r])); return; }
     case 'game-export': { const r = archiveLike(g); offerFile(fileBase(r) + '.txt', gameText(r)); return; }
     case 'player': { if (e0) e0.preventDefault(); if (st.tab !== 'player') st.prevTab = st.tab; st.player = { pk: v, cid: el.dataset.c != null ? +el.dataset.c : null }; st.tab = 'player'; if (!st.recs) st.recs = null; render(); window.scrollTo(0, 0); return; }
+    case 'open-yr': { st.modeYr = st.modeYr || {}; st.modeYr[el.dataset.tab] = +v; store.set('bsb-modeyr', st.modeYr); switchSeason(+v); return; }
     case 'player-back': { st.tab = st.prevTab || 'records'; render(); return; }
     case 'backup': { backupAll(); return; }
     case 'restore': { const f = $('#restorefile'); if (f) f.click(); return; }
@@ -442,7 +483,7 @@ function chg(k, el) {
   if (k === 'cards-yr') { const code = (D.teams[st.cardsTeam] || {}).realCode || st.cardsTeam.split('-').pop(); const ks = MIXKEYS(+el.value); st.cardsTeam = ks.includes(el.value + '-' + code) ? el.value + '-' + code : ks[0]; render(); }
   if (k === 'yrsel') { const t = document.getElementById(el.dataset.for); const cur = t.value.split('-').pop(); const ks = MIXKEYS(+el.value);
     t.innerHTML = ks.map(c => `<option value="${c}"${c.split('-').pop() === cur ? ' selected' : ''}>${esc(tName(c).replace(/^\d+ /, ''))}</option>`).join(''); }
-  if (k === 'replay-yr') { try { localStorage.setItem('bsb-yr', el.value); } catch (e) {} location.reload(); }
+  if (k === 'mode-yr') { st.modeYr = st.modeYr || {}; st.modeYr[el.dataset.tab] = +el.value; store.set('bsb-modeyr', st.modeYr); switchSeason(+el.value); }
   if (k === 'tour-yr') { st.tourName = ($('#tname') || {}).value || st.tourName; st.tourYr = +el.value; render(); }
   if (k === 'pref') { st.prefs[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value; store.set('bsb-prefs', st.prefs); }
   if (k === 'stepmode') { st.prefs.stepMode = el.checked; store.set('bsb-prefs', st.prefs); if (st.game && !st.game.busy) render(); }
@@ -707,15 +748,15 @@ function vHome() {
   <h1>Pull up a box seat.</h1>
   <p>Every player card from 2010 to 2026, ballpark cards and Tri-Fold charts, played by the book. Each at-bat shows the dice, the card it hit, and every chart the play passed through.</p></section>
   <div class="modes">
-    <div class="mode"><div class="eyebrow">${SEASON === 2020 ? '60' : '162'} games</div><h3>Season replay</h3><p class="muted">Replay the real ${SEASON} schedule. Use the actual starting lineups and pitchers from every game, or let the manager AI set lineups and run a five-man rotation.</p>
-      <div class="row"><button class="btn go" data-act="tab" data-v="season">${S ? 'Continue season' : 'Start a season'}</button></div></div>
-    <div class="mode"><div class="eyebrow">October</div><h3>Postseason</h3><p class="muted">The ${SEASON} bracket from the Wild Card round to the World Series, or the bracket from your own season replay. Real lineups are used whenever the matchup actually happened.</p>
+    <div class="mode"><div class="eyebrow">2010–2026</div><h3>Season replay</h3><p class="muted">Pick a season and replay its real schedule. Use the actual starting lineups and pitchers from every game, or let the manager AI set lineups and run a five-man rotation. Each season keeps its own save.</p>
+      <div class="row"><button class="btn go" data-act="tab" data-v="season">${savedReplays().length ? 'Continue a season' : 'Start a season'}</button></div></div>
+    <div class="mode"><div class="eyebrow">October</div><h3>Postseason</h3><p class="muted">Pick a season and play its real October bracket from the Wild Card round to the World Series, or the bracket from your own season replay. Real lineups are used whenever the matchup actually happened.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="post">${P ? 'Continue postseason' : 'Open bracket'}</button></div></div>
-    <div class="mode"><div class="eyebrow">Any matchup</div><h3>Exhibition</h3><p class="muted">Any two ${SEASON} teams for one game or a best-of series. Manage one side, both sides, or watch the AI play it out.</p>
+    <div class="mode"><div class="eyebrow">Any matchup</div><h3>Exhibition</h3><p class="muted">Any two teams from any season, 2010 to 2026, for one game or a best-of series. Manage one side, both sides, or watch the AI play it out.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="exh">Set up a game</button></div></div>
-    <div class="mode"><div class="eyebrow">Your rules</div><h3>Custom tournament</h3><p class="muted">Pick any clubs and run a knockout bracket, a round robin, or a round robin into playoffs, with your own series lengths.</p>
+    <div class="mode"><div class="eyebrow">Your rules</div><h3>Custom tournament</h3><p class="muted">Pick clubs from any seasons and run a knockout bracket, a round robin, or a round robin into playoffs, with your own series lengths.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="tour">${st.tour ? 'Continue tournament' : 'Build a tournament'}</button></div></div>
-    <div class="mode"><div class="eyebrow">${D.games.length.toLocaleString()} games</div><h3>Real games</h3><p class="muted">Pick any game played in ${SEASON}, regular season or postseason, and replay it with the as-played lineups and the actual game-time weather.</p>
+    <div class="mode"><div class="eyebrow">2010–2026</div><h3>Real games</h3><p class="muted">Pick a season, then any game played in it, regular season or postseason, and replay it with the as-played lineups and the actual game-time weather.</p>
       <div class="row"><button class="btn go" data-act="tab" data-v="hist">Find a game</button></div></div>
   </div>
   ${cur ? `<div class="panel resume" style="margin-top:16px"><div class="eyebrow">Saved game in progress · ${esc(KINDN[st.game.ctx.kind] || 'Game')}</div><div class="row" style="justify-content:space-between"><b style="font:700 18px var(--font-display)">${esc(st.game.g.teams[0].abbr)} ${st.game.g.score[0]}, ${esc(st.game.g.teams[1].abbr)} ${st.game.g.score[1]} · ${st.game.g.half === 0 ? 'Top' : 'Bottom'} ${B.ord(st.game.g.inning)}, ${st.game.g.outs} out</b><button class="btn go" data-act="tab" data-v="game">Resume game</button></div></div>` : ''}`;
