@@ -20,6 +20,11 @@ const store = {
 };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const tn = (cid) => cid == null ? '—' : B.titleName(D.cards[cid].n);
+// player identity that survives seasons and reloads: Retrosheet id when the card has one, else the name
+const pkOf = (cid) => { const c = D.cards[cid]; return c ? (c.rid || 'n:' + c.n.toUpperCase()) : null; };
+const cardYr = (cid) => { const c = D.cards[cid]; if (!c) return null; const t = D.teams[c.tm]; return c.yr || (t && t.yr) || SEASON; };
+const plink = (cid, label) => cid == null ? '—' : `<a href="#" class="plk" data-act="player" data-v="${esc(pkOf(cid))}" data-c="${cid}">${esc(label || tn(cid))}</a>`;
+const plinkKey = (pk, label) => `<a href="#" class="plk" data-act="player" data-v="${esc(pk)}">${esc(label)}</a>`;
 const team = (c) => D.teams[c];
 const tName = (c) => { const t = team(c); if (t.yr) return t.yr + ' ' + ((t.code === 'ATH' && t.yr >= 2025) ? 'Athletics' : t.city + ' ' + t.nick); return (c === 'ATH' && SEASON >= 2025) ? 'Athletics' : t.city + ' ' + t.nick; };
 const fmtDate = (d) => { const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+d.slice(4, 6) - 1]; return `${m} ${+d.slice(6, 8)}, ${d.slice(0, 4)}`; };
@@ -53,6 +58,10 @@ fetch(SEASON === 2025 ? 'bsb.json' : `seasons/bsb-${SEASON}.json`).then(r => r.j
   .catch(e => { main.innerHTML = `<div class="loading">Couldn't load the card data (${esc(e.message)}). Reload the page to try again.</div>`; });
 
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) { st.tab = b.dataset.tab; render(); window.scrollTo(0, 0); } });
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') ARC.flush(); });
+addEventListener('pagehide', () => ARC.flush());
+main.addEventListener('change', e => { if (e.target && e.target.id === 'restorefile' && e.target.files[0]) restoreAll(e.target.files[0]); });
 main.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (el && !el.disabled) act(el.dataset.act, el, e); });
 main.addEventListener('change', e => { const el = e.target.closest('[data-chg]'); if (el) chg(el.dataset.chg, el); });
 
@@ -108,7 +117,7 @@ function render() {
   document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === st.tab ? 'true' : 'false'));
   if (!D) return;
   if (MIX) { const need = mixNeeded().filter(k => D.teams[k] && D.teams[k].stub); if (need.length) { mixEnsure(need).then(render); return; } }
-  const v = { tour: vTour, records: vRecords, home: vHome, game: vGame, season: vSeason, post: vPost, exh: vExh, hist: vHist, cards: vCards, rules: vRules }[st.tab] || vHome;
+  const v = { player: vPlayer, tour: vTour, records: vRecords, home: vHome, game: vGame, season: vSeason, post: vPost, exh: vExh, hist: vHist, cards: vCards, rules: vRules }[st.tab] || vHome;
   const bar = ['season', 'post', 'hist'].includes(st.tab) ? `<div class="section"><div class="panel row" style="align-items:center;gap:10px"><b>Season</b><select data-chg="replay-yr">${yrOptions(SEASON)}</select><span class="muted">Season replay, postseason and real games use this year's schedule and card set.</span></div></div>` : '';
   main.innerHTML = bar + v();
   if (st.game && !st.game.busy) saveLive();
@@ -296,7 +305,7 @@ function stepGame(mode) {
 // ======================================================
 // actions
 // ======================================================
-function act(a, el) {
+function act(a, el, e0) {
   const GS = st.game, g = GS && GS.g;
   const v = el.dataset.v;
   switch (a) {
@@ -344,7 +353,7 @@ function act(a, el) {
     case 'hist-more': st.histLimit = (st.histLimit || 60) + 120; render(); return;
     // ----- season -----
     case 'season-new': { newSeason($('#sasp') ? $('#sasp').checked : false); render(); return; }
-    case 'season-reset': { if (el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to erase the season and its game history'; return; } S = null; store.del('bsb-season'); ARC.clearKind('season'); st.recs = null; render(); return; }
+    case 'season-reset': { if (el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to start over (finished games stay in the Scorebook)'; return; } S = null; store.del('bsb-season'); st.recs = null; render(); return; }
     case 'season-sim': { const n = +v; el.disabled = true; simSeasonGames(n === 0 ? 99999 : n, null, render); return; }
     case 'season-simday': { const d = D.gamesById[S.sched[S.next]].d; simSeasonGames(99999, d, render); return; }
     case 'season-simweek': { const d0 = D.gamesById[S.sched[S.next]].d; const t = new Date(Date.UTC(+d0.slice(0, 4), +d0.slice(4, 6) - 1, +d0.slice(6, 8) + 6)); const d = t.toISOString().slice(0, 10).replace(/-/g, ''); simSeasonGames(99999, d, render); return; }
@@ -354,7 +363,7 @@ function act(a, el) {
     case 'season-to-post': { P = newPost(seedsFromSeason(), { asPlayed: false, from: 'season' }); savePost(); st.tab = 'post'; render(); return; }
     // ----- postseason -----
     case 'post-new': { P = newPost(REAL_SEEDS, { asPlayed: $('#pasp').checked, from: String(SEASON) }); savePost(); render(); return; }
-    case 'post-reset': { if (el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to erase'; return; } P = null; store.del('bsb-post'); ARC.clearKind('post'); st.recs = null; render(); return; }
+    case 'post-reset': { if (el.dataset.confirm !== 'yes') { el.dataset.confirm = 'yes'; el.textContent = 'Click again to erase'; return; } P = null; store.del('bsb-post'); st.recs = null; render(); return; }
     case 'post-play': { const s = P.series.find(x => x.id === v); const gs = seriesGameSetup(s, P); startGame(gs.setup, { kind: 'post', sid: s.id, user: $('#puser').value === 'both' ? 'both' : ($('#puser').value === 'hi' ? (gs.homeIsHi ? 'home' : 'away') : $('#puser').value === 'lo' ? (gs.homeIsHi ? 'away' : 'home') : 'none') }); return; }
     case 'post-sim': { const s = P.series.find(x => x.id === v); simSeriesGame(s, P); advancePost(P); savePost(); render(); return; }
     case 'post-simser': { const s = P.series.find(x => x.id === v); let k = 0; while (!seriesOver(s) && k++ < 10) simSeriesGame(s, P); advancePost(P); savePost(); render(); return; }
@@ -400,6 +409,11 @@ function act(a, el) {
     case 'game-pbp': { const r = archiveLike(g); if (v === 'csv') offerFile(fileBase(r) + '-pbp.csv', pbpCSV([r])); else offerFile(fileBase(r) + '-pbp.txt', pbpText(r)); return; }
     case 'rec-pbp': { const r = (st.recs || []).find(x => x.id === v); if (r) offerFile(fileBase(r) + '-pbp.csv', pbpCSV([r])); return; }
     case 'game-export': { const r = archiveLike(g); offerFile(fileBase(r) + '.txt', gameText(r)); return; }
+    case 'player': { if (e0) e0.preventDefault(); if (st.tab !== 'player') st.prevTab = st.tab; st.player = { pk: v, cid: el.dataset.c != null ? +el.dataset.c : null }; st.tab = 'player'; if (!st.recs) st.recs = null; render(); window.scrollTo(0, 0); return; }
+    case 'player-back': { st.tab = st.prevTab || 'records'; render(); return; }
+    case 'backup': { backupAll(); return; }
+    case 'restore': { const f = $('#restorefile'); if (f) f.click(); return; }
+    case 'pl-more': st.plLog = (st.plLog || 40) + 100; render(); return;
     case 'rec-more': st.recLimit = (st.recLimit || 100) + 200; render(); return;
     // ----- single series -----
     case 'one-new': {
@@ -435,6 +449,7 @@ function chg(k, el) {
   if (k === 'speed') { st.prefs.speed = el.value; store.set('bsb-prefs', st.prefs); }
   if (k === 'rec-scope') { st.recScope = el.value; render(); }
   if (k === 'rec-team') { st.recTeam = el.value; render(); }
+  if (k === 'plq') { st.plq = el.value; render(); const q = $('#plq'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   if (k === 'one-pick') { st.onePick = el.value; render(); }
 }
 function readOpts() { const p = st.prefs; return { fatigue: p.fatigue, wildPlays: p.wildPlays, bpEffects: p.bpEffects, autoRunner: p.autoRunner }; }
@@ -483,8 +498,8 @@ const KINDN = { tour: 'Tournament', season: 'Season replay', post: 'Postseason',
 function archiveGame(g, kind, label, id, keepUth) {
   const box = g.teams.map(T => ({
     code: T.code, name: T.name, abbr: T.abbr,
-    bat: Object.values(T.bat).sort((a, b) => (a.order - b.order) || ((a.sub ? 1 : 0) - (b.sub ? 1 : 0))).map(b => ({ cid: b.cid, n: tn(b.cid), pos: b.pos, sub: !!b.sub, PA: b.PA, AB: b.AB, R: b.R, H: b.H, D: b.D, T: b.T, HR: b.HR, RBI: b.RBI, BB: b.BB, SO: b.SO, HBP: b.HBP, SB: b.SB, CS: b.CS, SF: b.SF, SH: b.SH, GDP: b.GDP, IBB: b.IBB || 0, WPA: +(b.WPA || 0).toFixed(4) })),
-    pit: T.pitOrder.map(cid => { const p = T.pit[cid]; return { cid, n: tn(cid), GS: cid === T.spCid ? 1 : 0, OUTS: p.OUTS, BF: p.BF, H: p.H, R: p.R, ER: p.ER, BB: p.BB, SO: p.SO, HR: p.HR, HBP: p.HBP, WP: p.WP, D: p.D || 0, T: p.T || 0, SF: p.SF || 0, SH: p.SH || 0, IBB: p.IBB || 0, WPA: +(p.WPA || 0).toFixed(4), dec: p.dec }; })
+    bat: Object.values(T.bat).sort((a, b) => (a.order - b.order) || ((a.sub ? 1 : 0) - (b.sub ? 1 : 0))).map(b => ({ cid: b.cid, pk: pkOf(b.cid), yr: cardYr(b.cid), n: tn(b.cid), pos: b.pos, sub: !!b.sub, PA: b.PA, AB: b.AB, R: b.R, H: b.H, D: b.D, T: b.T, HR: b.HR, RBI: b.RBI, BB: b.BB, SO: b.SO, HBP: b.HBP, SB: b.SB, CS: b.CS, SF: b.SF, SH: b.SH, GDP: b.GDP, IBB: b.IBB || 0, WPA: +(b.WPA || 0).toFixed(4) })),
+    pit: T.pitOrder.map(cid => { const p = T.pit[cid]; return { cid, pk: pkOf(cid), yr: cardYr(cid), n: tn(cid), GS: cid === T.spCid ? 1 : 0, OUTS: p.OUTS, BF: p.BF, H: p.H, R: p.R, ER: p.ER, BB: p.BB, SO: p.SO, HR: p.HR, HBP: p.HBP, WP: p.WP, D: p.D || 0, T: p.T || 0, SF: p.SF || 0, SH: p.SH || 0, IBB: p.IBB || 0, WPA: +(p.WPA || 0).toFixed(4), dec: p.dec }; })
   }));
   const w = g.weather || {};
   const rec = { id: id || ('X' + Date.now() + Math.random().toString(36).slice(2, 6)), kind, label: label || KINDN[kind], date: g.date || '', ts: Date.now(),
@@ -801,10 +816,10 @@ function nowHtml(g, GS) {
   const nxt = (k) => off.lineup[(off.bi + k) % off.lineup.length].cid;
   const d = g.cur && g.cur.dice;
   return `<div class="mu">
-    <div class="mu-p"><div class="eyebrow">At bat · ${esc(off.abbr)}</div><div class="mu-n">${esc(tn(bcid))}</div>
+    <div class="mu-p"><div class="eyebrow">At bat · ${esc(off.abbr)}</div><div class="mu-n">${plink(bcid)}</div>
       <div class="mu-s">${bats}HB · ${bl.H}-for-${bl.AB} today · wOBA vs ${pc.th}HP <b>${woStr(bw && bw[pc.th])}</b></div></div>
     <div class="mu-vs">vs</div>
-    <div class="mu-p"><div class="eyebrow">Pitching · ${esc(def.abbr)}</div><div class="mu-n">${esc(tn(def.pitcher))}</div>
+    <div class="mu-p"><div class="eyebrow">Pitching · ${esc(def.abbr)}</div><div class="mu-n">${plink(def.pitcher)}</div>
       <div class="mu-s">${pc.th}HP · ${ipStr(pl.OUTS)} IP · BF ${pl.BF} · fatigue <b class="${f <= 0 ? 'hot' : ''}">${f.toFixed(1)}</b> · wOBA vs ${bats}HB <b>${woStr(pw && pw[bats])}</b></div></div>
   </div>
   <div class="tray"><div class="dice" id="dice">${diceFaces(d)}</div><div class="ticker" id="ticker">${GS.lastCall ? `<div class="tk res">${esc(GS.lastCall.desc)}</div>` : '<div class="tk muted">Tap Pitch to roll the dice.</div>'}</div></div>
@@ -1115,7 +1130,7 @@ function batterCard(c, focus, cell, note) {
   }).join('');
   const T = D.teams[c.tm];
   const pos = (c.pos || []).join('/');
-  return `<div class="card"><div class="hd"><span class="nm">${esc(c.n)}</span><span style="font-weight:700">B/${{ R: 'Right', L: 'Left', B: 'Both' }[c.b]} [${c.tend}]</span></div>
+  return `<div class="card"><div class="hd"><span class="nm">${c.rid || c.n ? plinkKey(c.rid || 'n:' + c.n.toUpperCase(), c.n) : ''}</span><span style="font-weight:700">B/${{ R: 'Right', L: 'Left', B: 'Both' }[c.b]} [${c.tend}]</span></div>
     <div class="meta"><span>${pos}</span>${c.F && c.F.length ? `<span>F${c.arm ? '(Arm)' : ''}: ${c.F.join('/')}${c.arm ? '(' + c.arm + ')' : ''}</span>` : ''}${c.E && c.E.length ? `<span>E: ${c.E.join('/')}</span>` : ''}${c.DP != null ? `<span>DP: ${c.DP}</span>` : ''}<span class="tm">${T ? (T.yr || SEASON) + ' ' + esc(T.nick) : (note || 'Generic')}</span></div>
     <div class="meta"><span>B/R: ${c.BR}</span><span>SB/R: ${c.SBR}</span><span>SBF: ${c.SBF}</span></div>
     <div class="vs">${vs('L', 'LEFT')}${vs('R', 'RIGHT')}</div><div class="cgrid">${cols}</div></div>`;
@@ -1133,7 +1148,7 @@ function pitcherCard(c, pcell, fat) {
     }
   }
   const T = D.teams[c.tm];
-  return `<div class="card"><div class="hd"><span class="nm">${esc(c.n)}</span><span style="font-weight:700">T/${c.th === 'L' ? 'Left' : 'Right'} [${c.tend}]</span></div>
+  return `<div class="card"><div class="hd"><span class="nm">${plinkKey(c.rid || 'n:' + c.n.toUpperCase(), c.n)}</span><span style="font-weight:700">T/${c.th === 'L' ? 'Left' : 'Right'} [${c.tend}]</span></div>
     <div class="meta"><span>P · E: ${c.E}</span><span>Bats: ${c.b}</span><span>Hit: ${c.hc}</span><span class="tm">${T && T.yr ? T.yr : SEASON} ${T ? esc(T.nick) : ''}</span></div>
     <div class="meta"><span>G ${c.G} GS ${c.GS} IP ${c.IP}</span><span>ERA ${c.ERA}</span><span>W/L ${c.W}-${c.Lo}</span><span>SV ${c.SV}</span></div>
     <div class="meta"><span>L1 Ftg ${c.F1}</span><span>L2 Ftg ${c.F2}${fat != null ? ` (now ${fat.toFixed(1)})` : ''}</span><span>SBR ${c.SBR}</span><span>SBF ${c.SBF}</span></div>
@@ -1175,9 +1190,9 @@ function boxScore(g) {
   return [0, 1].map(s => {
     const T = g.teams[s];
     const bats = Object.values(T.bat).sort((a, b) => (a.order - b.order) || ((a.sub ? 1 : 0) - (b.sub ? 1 : 0)));
-    const brow = (b) => { const x = scopeLine('b', b.cid, b, sc); const w = wobaBat(x); return `<tr><td class="l">${b.sub ? '&nbsp;&nbsp;' : ''}${esc(tn(b.cid))} <span class="muted">${b.pos}</span></td><td>${b.AB}</td><td>${b.R}</td><td>${b.H}</td><td>${b.RBI}</td><td>${b.BB}</td><td>${b.SO}</td><td>${b.D ? b.D + ' 2B' : ''}${b.T ? (b.D ? ', ' : '') + b.T + ' 3B' : ''}${b.HR ? ((b.D || b.T) ? ', ' : '') + b.HR + ' HR' : ''}</td><td class="${(b.WPA || 0) >= 0 ? 'pos' : 'neg'}">${wpaStr(b.WPA || 0)}</td><td>${w == null ? '—' : avg3(w)}</td></tr>`; };
+    const brow = (b) => { const x = scopeLine('b', b.cid, b, sc); const w = wobaBat(x); return `<tr><td class="l">${b.sub ? '&nbsp;&nbsp;' : ''}${plink(b.cid)} <span class="muted">${b.pos}</span></td><td>${b.AB}</td><td>${b.R}</td><td>${b.H}</td><td>${b.RBI}</td><td>${b.BB}</td><td>${b.SO}</td><td>${b.D ? b.D + ' 2B' : ''}${b.T ? (b.D ? ', ' : '') + b.T + ' 3B' : ''}${b.HR ? ((b.D || b.T) ? ', ' : '') + b.HR + ' HR' : ''}</td><td class="${(b.WPA || 0) >= 0 ? 'pos' : 'neg'}">${wpaStr(b.WPA || 0)}</td><td>${w == null ? '—' : avg3(w)}</td></tr>`; };
     const tot = bats.reduce((a, b) => { for (const k of ['AB', 'R', 'H', 'RBI', 'BB', 'SO', 'WPA']) a[k] += b[k] || 0; return a; }, { AB: 0, R: 0, H: 0, RBI: 0, BB: 0, SO: 0, WPA: 0 });
-    const prow = (cid) => { const p = T.pit[cid]; const x = scopeLine('p', cid, p, sc); const w = wobaPit(x); return `<tr><td class="l">${esc(tn(cid))}${p.dec ? ` <span class="tag ${p.dec === 'W' ? 'w' : ''}">${p.dec}</span>` : ''}</td><td>${ipStr(p.OUTS)}</td><td>${p.H}</td><td>${p.R}</td><td>${p.ER}</td><td>${p.BB}</td><td>${p.SO}</td><td>${p.HR}</td><td class="${(p.WPA || 0) >= 0 ? 'pos' : 'neg'}">${wpaStr(p.WPA || 0)}</td><td>${w == null ? '—' : avg3(w)}</td></tr>`; };
+    const prow = (cid) => { const p = T.pit[cid]; const x = scopeLine('p', cid, p, sc); const w = wobaPit(x); return `<tr><td class="l">${plink(cid)}${p.dec ? ` <span class="tag ${p.dec === 'W' ? 'w' : ''}">${p.dec}</span>` : ''}</td><td>${ipStr(p.OUTS)}</td><td>${p.H}</td><td>${p.R}</td><td>${p.ER}</td><td>${p.BB}</td><td>${p.SO}</td><td>${p.HR}</td><td class="${(p.WPA || 0) >= 0 ? 'pos' : 'neg'}">${wpaStr(p.WPA || 0)}</td><td>${w == null ? '—' : avg3(w)}</td></tr>`; };
     return `<h3 style="margin-top:${s ? 14 : 0}px">${esc(T.name)}</h3><table class="mini"><thead><tr><th class="l">Batter</th><th>AB</th><th>R</th><th>H</th><th>RBI</th><th>BB</th><th>K</th><th>XBH</th><th>WPA</th><th>${wl}</th></tr></thead><tbody>${bats.map(brow).join('')}
       <tr><td class="l"><b>Totals</b></td><td>${tot.AB}</td><td>${tot.R}</td><td>${tot.H}</td><td>${tot.RBI}</td><td>${tot.BB}</td><td>${tot.SO}</td><td></td><td>${wpaStr(tot.WPA)}</td><td></td></tr></tbody></table>
       <table class="mini" style="margin-top:6px"><thead><tr><th class="l">Pitcher</th><th>IP</th><th>H</th><th>R</th><th>ER</th><th>BB</th><th>K</th><th>HR</th><th>WPA</th><th>${sc.label === 'Game' ? 'wOBA allowed' : `wOBA allowed (${sc.label})`}</th></tr></thead><tbody>${T.pitOrder.map(prow).join('')}</tbody></table>`;
@@ -1458,6 +1473,109 @@ function fileBase(r) { return `${r.date || 'game'}-${r.box[0].abbr}-at-${r.box[1
 function archiveLike(g) { const r = archiveGameObj(g); return r; }
 function archiveGameObj(g) { const saved = ARC.put; ARC.put = () => {}; const ctx = st.game.ctx; const r = archiveGame(g, ctx.kind, KINDN[ctx.kind] + (g.over ? '' : ' · in progress'), 'tmp', true); ARC.put = saved; return r; }
 function scopedRecs() { let r = st.recs || []; if (st.recScope && st.recScope !== 'all') r = r.filter(x => x.kind === st.recScope); if (st.recTeam) r = r.filter(x => x.box.some(T => T.code === st.recTeam)); return r; }
+// ======================================================
+// players: totals from every saved game, by season card and by mode, plus a game log
+// ======================================================
+function recRows(r) {
+  const out = [];
+  r.box.forEach((T, s) => {
+    const opp = r.box[1 - s];
+    (T.bat || []).forEach(b => out.push({ t: 'B', pk: b.pk || ('n:' + String(b.n).toUpperCase()), n: b.n, yr: b.yr, tm: T.abbr, opp: opp.abbr, home: s === 1, x: b, r }));
+    (T.pit || []).forEach(p => out.push({ t: 'P', pk: p.pk || ('n:' + String(p.n).toUpperCase()), n: p.n, yr: p.yr, tm: T.abbr, opp: opp.abbr, home: s === 1, x: p, r }));
+  });
+  return out;
+}
+const BK = ['PA', 'AB', 'R', 'H', 'D', 'T', 'HR', 'RBI', 'BB', 'IBB', 'SO', 'HBP', 'SB', 'CS', 'SF', 'SH', 'GDP'];
+const PK = ['GS', 'OUTS', 'BF', 'H', 'R', 'ER', 'BB', 'IBB', 'SO', 'HR', 'HBP', 'D', 'T', 'SF', 'SH', 'WP'];
+function addLine(acc, t, x, r) {
+  acc.G = (acc.G || 0) + 1;
+  (t === 'B' ? BK : PK).forEach(k => acc[k] = (acc[k] || 0) + (x[k] || 0));
+  if (t === 'P' && x.dec) acc[x.dec] = (acc[x.dec] || 0) + 1;
+  return acc;
+}
+function batLine(a) {
+  const avg = a.AB ? a.H / a.AB : 0, obpd = (a.AB || 0) + (a.BB || 0) + (a.HBP || 0) + (a.SF || 0), obp = obpd ? ((a.H || 0) + (a.BB || 0) + (a.HBP || 0)) / obpd : 0;
+  const slg = a.AB ? ((a.H - a.D - a.T - a.HR) + 2 * a.D + 3 * a.T + 4 * a.HR) / a.AB : 0; const w = wobaBat(a);
+  return `<td>${a.G}</td><td>${a.PA}</td><td>${a.AB}</td><td>${a.R}</td><td>${a.H}</td><td>${a.D}</td><td>${a.T}</td><td>${a.HR}</td><td>${a.RBI}</td><td>${a.BB}</td><td>${a.SO}</td><td>${a.SB}</td><td>${avg3(avg)}</td><td>${avg3(obp)}</td><td>${avg3(slg)}</td><td>${avg3(obp + slg)}</td><td>${w == null ? '' : avg3(w)}</td>`;
+}
+const BH = '<th>G</th><th>PA</th><th>AB</th><th>R</th><th>H</th><th>2B</th><th>3B</th><th>HR</th><th>RBI</th><th>BB</th><th>K</th><th>SB</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th><th>wOBA</th>';
+function pitLine(a) {
+  const ip = a.OUTS / 3, era = ip ? a.ER * 9 / ip : 0, whip = ip ? (a.H + a.BB) / ip : 0, w = wobaPit(a);
+  return `<td>${a.G}</td><td>${a.GS}</td><td>${a.W || 0}-${a.L || 0}</td><td>${a.SV || 0}</td><td>${ipStr(a.OUTS)}</td><td>${a.H}</td><td>${a.ER}</td><td>${a.HR}</td><td>${a.BB}</td><td>${a.SO}</td><td>${era.toFixed(2)}</td><td>${whip.toFixed(2)}</td><td>${a.BF ? (100 * a.SO / a.BF).toFixed(1) : ''}</td><td>${a.BF ? (100 * a.BB / a.BF).toFixed(1) : ''}</td><td>${w == null ? '' : avg3(w)}</td>`;
+}
+const PH = '<th>G</th><th>GS</th><th>W-L</th><th>SV</th><th>IP</th><th>H</th><th>ER</th><th>HR</th><th>BB</th><th>K</th><th>ERA</th><th>WHIP</th><th>K%</th><th>BB%</th><th>wOBA</th>';
+function playerIndex() {
+  if (st._pidx && st._pidx.n === (st.recs || []).length) return st._pidx.m;
+  const m = {};
+  (st.recs || []).forEach(r => recRows(r).forEach(o => {
+    const P = m[o.pk] = m[o.pk] || { pk: o.pk, n: o.n, B: {}, P: {}, yrs: new Set() };
+    addLine(P[o.t], o.t, o.x, o.r); if (o.yr) P.yrs.add(o.yr);
+  }));
+  st._pidx = { n: (st.recs || []).length, m }; return m;
+}
+function playersPanel() {
+  const m = playerIndex(); const q = (st.plq || '').toLowerCase();
+  let list = Object.values(m); if (q) list = list.filter(p => p.n.toLowerCase().includes(q));
+  const bats = list.filter(p => p.B.PA).sort((a, b) => b.B.PA - a.B.PA).slice(0, q ? 60 : 25);
+  const pits = list.filter(p => p.P.OUTS).sort((a, b) => b.P.OUTS - a.P.OUTS).slice(0, q ? 60 : 25);
+  if (!list.length && !q) return '';
+  return `<div class="panel"><h2>Players</h2><p class="muted">Every player's totals across all saved games. Tap a name for his full page.</p>
+    <div class="row"><label class="fld">Find a player <input type="text" id="plq" value="${esc(st.plq || '')}" placeholder="Name" data-chg="plq"></label></div>
+    <div class="tablewrap"><table class="mini"><thead><tr><th class="l">Batter</th>${BH}</tr></thead><tbody>${bats.map(p => `<tr><td class="l">${plinkKey(p.pk, B.titleName(p.n))}</td>${batLine(p.B)}</tr>`).join('')}</tbody></table></div>
+    <div class="tablewrap" style="margin-top:8px"><table class="mini"><thead><tr><th class="l">Pitcher</th>${PH}</tr></thead><tbody>${pits.map(p => `<tr><td class="l">${plinkKey(p.pk, B.titleName(p.n))}</td>${pitLine(p.P)}</tr>`).join('')}</tbody></table></div></div>`;
+}
+function vPlayer() {
+  if (!st.recs) { ARC.all().then(r => { st.recs = r; if (st.tab === 'player') render(); }); return `<div class="loading">Opening the scorebook…</div>`; }
+  const pk = st.player.pk; const rows = [];
+  st.recs.forEach(r => recRows(r).forEach(o => { if (o.pk === pk) rows.push(o); }));
+  const cid = st.player.cid; const card = cid != null ? D.cards[cid] : null;
+  const realCards = Object.keys(D.cards).map(Number).filter(i => D.cards[i] && pkOf(i) === pk);
+  const name = card ? card.n : realCards.length ? D.cards[realCards[0]].n : (rows[0] ? rows[0].n : pk.replace(/^n:/, ''));
+  const tot = { B: {}, P: {} }, byYr = {}, byKind = {};
+  rows.forEach(o => { addLine(tot[o.t], o.t, o.x, o.r);
+    const y = (byYr[o.t + (o.yr || '?')] = byYr[o.t + (o.yr || '?')] || { t: o.t, yr: o.yr || '?', tm: o.tm, a: {} }); addLine(y.a, o.t, o.x, o.r);
+    const k = (byKind[o.t + o.r.kind] = byKind[o.t + o.r.kind] || { t: o.t, kind: o.r.kind, a: {} }); addLine(k.a, o.t, o.x, o.r); });
+  const sec = (t, title, head, line) => {
+    if (!tot[t].G) return '';
+    const yrs = Object.values(byYr).filter(x => x.t === t).sort((a, b) => String(a.yr).localeCompare(String(b.yr)));
+    const kinds = Object.values(byKind).filter(x => x.t === t);
+    return `<h3 style="margin-top:12px">${title}</h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l"></th>${head}</tr></thead><tbody>
+      <tr><td class="l"><b>All saved games</b></td>${line(tot[t])}</tr>
+      ${yrs.map(x => `<tr><td class="l">${x.yr} card · ${esc(x.tm)}</td>${line(x.a)}</tr>`).join('')}
+      ${kinds.map(x => `<tr><td class="l muted">${esc(KINDN[x.kind] || x.kind)}</td>${line(x.a)}</tr>`).join('')}</tbody></table></div>`;
+  };
+  const log = rows.slice().sort((a, b) => recSort(b.r, a.r)).slice(0, st.plLog || 40).map(o => {
+    const x = o.x; const line = o.t === 'B' ? `${x.H}-${x.AB}${x.HR ? `, ${x.HR} HR` : ''}${x.RBI ? `, ${x.RBI} RBI` : ''}${x.BB ? `, ${x.BB} BB` : ''}${x.SO ? `, ${x.SO} K` : ''}${x.SB ? `, ${x.SB} SB` : ''}`
+      : `${ipStr(x.OUTS)} IP, ${x.H} H, ${x.ER} ER, ${x.BB} BB, ${x.SO} K${x.dec ? ` (${x.dec})` : ''}`;
+    return `<div class="gline"><span><span class="muted">${o.r.date ? fmtDate(o.r.date) + ' · ' : ''}${esc(o.r.label)}</span><br><b>${esc(o.tm)} ${o.home ? 'vs' : '@'} ${esc(o.opp)}</b> · ${o.r.box[0].abbr} ${o.r.score[0]}, ${o.r.box[1].abbr} ${o.r.score[1]}</span><span>${line}</span><span></span></div>`;
+  }).join('');
+  const cardHtml = (card ? [cid] : realCards.slice(0, 2)).map(i => D.cards[i].t === 'P' ? pitcherCard(D.cards[i]) : batterCard(D.cards[i])).join('');
+  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">Player</div><h2>${esc(B.titleName(name))}</h2></div><button class="btn sm" data-act="player-back">Back</button></div>
+    ${rows.length ? '' : '<p class="muted">No saved games for this player yet. Play or simulate a game with him and his stats will build up here.</p>'}
+    ${sec('B', 'Batting in your games', BH, batLine)}${sec('P', 'Pitching in your games', PH, pitLine)}
+    ${rows.length ? `<h3 style="margin-top:12px">Game log</h3><div class="schedule">${log}</div>${rows.length > (st.plLog || 40) ? '<button class="btn sm" data-act="pl-more">Show more games</button>' : ''}` : ''}
+    ${cardHtml ? `<h3 style="margin-top:12px">Card</h3><div class="cards2">${cardHtml}</div>` : ''}</div></div>`;
+}
+async function backupAll() {
+  const games = await ARC.all(); const ls = {};
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('bsb')) ls[k] = localStorage.getItem(k); } } catch (e) {}
+  const d = new Date(); const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+  offerFile(`boxseat-backup-${stamp}.json`, JSON.stringify({ app: 'boxseat', v: 1, saved: d.toISOString(), games, storage: ls }));
+}
+function restoreAll(file) {
+  const rd = new FileReader();
+  rd.onload = async () => {
+    try {
+      const b = JSON.parse(rd.result); if (!b || b.app !== 'boxseat') { toast('That file is not a Box Seat backup.'); return; }
+      const have = new Set((await ARC.all()).map(r => r.id)); let n = 0;
+      (b.games || []).forEach(r => { if (!have.has(r.id)) { ARC.put(r); n++; } }); await ARC.flush();
+      Object.entries(b.storage || {}).forEach(([k, v]) => { try { if (localStorage.getItem(k) == null) localStorage.setItem(k, v); } catch (e) {} });
+      st.recs = null; toast(`Restored ${n} game${n === 1 ? '' : 's'} plus saved seasons and tournaments.`); render();
+    } catch (e) { toast('Could not read that backup file.'); }
+  };
+  rd.readAsText(file);
+}
+
 function vRecords() {
   if (!st.recs) { ARC.all().then(r => { st.recs = r; if (st.tab === 'records') render(); }); return `<div class="loading">Opening the scorebook…</div>`; }
   const E = st.exportText;
@@ -1471,7 +1589,10 @@ function vRecords() {
       <label class="fld">Team <select data-chg="rec-team"><option value="">All teams</option>${TEAMLIST().map(c => `<option value="${c}" ${st.recTeam === c ? 'selected' : ''}>${esc(tName(c))}</option>`).join('')}</select></label></div>
     <div class="row" style="margin-top:10px"><span class="eyebrow" style="width:100%">Export ${recs.length} game${recs.length === 1 ? '' : 's'}</span>
       <button class="btn" data-act="rec-bulk" data-v="txt">Game logs &amp; box scores (.txt)</button><button class="btn" data-act="rec-bulk" data-v="pbp">Play-by-play (.csv)</button><button class="btn" data-act="rec-bulk" data-v="bat">Batting stats (.csv)</button>
-      <button class="btn" data-act="rec-bulk" data-v="pit">Pitching stats (.csv)</button><button class="btn" data-act="rec-bulk" data-v="json">Full data (.json)</button></div></div>
+      <button class="btn" data-act="rec-bulk" data-v="pit">Pitching stats (.csv)</button><button class="btn" data-act="rec-bulk" data-v="json">Full data (.json)</button></div>
+    <div class="row" style="margin-top:10px"><span class="eyebrow" style="width:100%">Keep everything safe</span><button class="btn go" data-act="backup">Back up all games, seasons and tournaments</button><button class="btn" data-act="restore">Restore a backup</button><input type="file" id="restorefile" accept=".json,application/json" style="display:none"></div>
+    <p class="muted" style="font-size:12px">Games are stored in this browser and the app asks it to keep them permanently. A backup file also lets you move everything to another phone or computer.</p></div>
+    ${playersPanel()}
     <div class="schedule">${recs.slice(0, lim).map(r => `<div class="gline rec"><span><span class="muted">${r.date ? fmtDate(r.date) + ' · ' : ''}${esc(r.label)}</span><br><b>${esc(r.box[0].abbr)} ${r.score[0]} @ ${esc(r.box[1].abbr)} ${r.score[1]}</b>${r.inn > 9 ? ` <span class="muted">(${r.inn})</span>` : ''}</span>
       <span class="row" style="gap:6px"><button class="btn sm" data-act="rec-view" data-v="${esc(r.id)}">${st.recOpen === r.id ? 'Hide' : 'View'}</button><button class="btn sm" data-act="rec-export" data-v="${esc(r.id)}">Export</button><button class="btn sm" data-act="rec-pbp" data-v="${esc(r.id)}">Play-by-play</button></span>
       ${st.recOpen === r.id ? `<pre class="gametext">${esc(gameText(r))}</pre>` : ''}</div>`).join('') || '<p class="muted">No games yet. Play or simulate a game and it will appear here.</p>'}
