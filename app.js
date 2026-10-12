@@ -64,7 +64,18 @@ try { if (navigator.storage && navigator.storage.persist) navigator.storage.pers
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') ARC.flush(); });
 addEventListener('pagehide', () => ARC.flush());
 main.addEventListener('change', e => { if (e.target && e.target.id === 'restorefile' && e.target.files[0]) restoreAll(e.target.files[0]); });
-main.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (el && !el.disabled) act(el.dataset.act, el, e); });
+const SIMACTS = new Set(['exh-sim', 'exh-simall', 'hist-sim', 'season-sim', 'season-simday', 'season-simweek', 'post-sim', 'post-simser', 'post-simround', 'post-simall', 'tour-sim-rr', 'tour-sim-s', 'tour-sim-ser', 'tour-sim-all', 'one-sim', 'one-simser', 'end', 'half']);
+function confirmBox(msg, ok) {
+  const w = document.createElement('div'); w.className = 'cfm';
+  w.innerHTML = `<div class="cfm-box" role="dialog" aria-modal="true"><p>${esc(msg)}</p><div class="row"><button class="btn" data-x="no">Cancel</button><button class="btn go" data-x="yes">Sim</button></div></div>`;
+  const close = () => { w.remove(); document.removeEventListener('keydown', key); };
+  const key = (e) => { if (e.key === 'Escape') close(); if (e.key === 'Enter') { close(); ok(); } };
+  w.addEventListener('click', e => { const x = e.target.closest('[data-x]'); if (e.target === w || (x && x.dataset.x === 'no')) close(); else if (x) { close(); ok(); } });
+  document.addEventListener('keydown', key); document.body.appendChild(w); w.querySelector('[data-x="yes"]').focus();
+}
+main.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
+  if (SIMACTS.has(el.dataset.act)) { e.preventDefault(); const lbl = el.textContent.trim(); confirmBox(`${lbl}? The result is decided instantly and saved — you won't play ${/rest|end|series|round|week|day|10/i.test(lbl) ? 'these games' : el.dataset.act === 'half' ? 'the rest of this inning' : el.dataset.act === 'end' ? 'the rest of this game' : 'this game'} pitch by pitch.`, () => act(el.dataset.act, el, e)); return; }
+  act(el.dataset.act, el, e); });
 main.addEventListener('change', e => { const el = e.target.closest('[data-chg]'); if (el) chg(el.dataset.chg, el); });
 
 // ======================================================
@@ -449,11 +460,13 @@ function act(a, el, e0) {
     case 'game-pbp': { const r = archiveLike(g); if (v === 'csv') offerFile(fileBase(r) + '-pbp.csv', pbpCSV([r])); else offerFile(fileBase(r) + '-pbp.txt', pbpText(r)); return; }
     case 'rec-pbp': { const r = (st.recs || []).find(x => x.id === v); if (r) offerFile(fileBase(r) + '-pbp.csv', pbpCSV([r])); return; }
     case 'game-export': { const r = archiveLike(g); offerFile(fileBase(r) + '.txt', gameText(r)); return; }
-    case 'player': { if (e0) e0.preventDefault(); if (st.tab !== 'player') st.prevTab = st.tab; st.player = { pk: v, cid: el.dataset.c != null ? +el.dataset.c : null }; st.tab = 'player'; if (!st.recs) st.recs = null; render(); window.scrollTo(0, 0); return; }
+    case 'player': { if (e0) e0.preventDefault(); if (st.game) st.game.auto = false; if (st.tab !== 'player') st.prevTab = st.tab; st.player = { pk: v, cid: el.dataset.c != null ? +el.dataset.c : null }; st.ptab = 'ov'; st.plCards = 2; st.plLog = 40; st.tab = 'player'; if (!st.recs) st.recs = null; render(); window.scrollTo(0, 0); return; }
     case 'open-yr': { st.modeYr = st.modeYr || {}; st.modeYr[el.dataset.tab] = +v; store.set('bsb-modeyr', st.modeYr); switchSeason(+v); return; }
     case 'player-back': { st.tab = st.prevTab || 'records'; render(); return; }
     case 'backup': { backupAll(); return; }
     case 'restore': { const f = $('#restorefile'); if (f) f.click(); return; }
+    case 'ptab': st.ptab = v; render(); return;
+    case 'pl-cards': st.plCards = 99; render(); return;
     case 'pl-more': st.plLog = (st.plLog || 40) + 100; render(); return;
     case 'rec-more': st.recLimit = (st.recLimit || 100) + 200; render(); return;
     // ----- single series -----
@@ -903,6 +916,18 @@ function actionBar(g, GS) {
     <label class="spd">Speed <select data-chg="speed" aria-label="Animation speed">${Object.keys(SPEEDS).map(k => `<option value="${k}" ${sp === k ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select></label>
   </div></div>`;
 }
+// available substitutes with platoon wOBA; names open the player page (h = handedness faced right now)
+function subTable(T, kind, h) {
+  const ids = (kind === 'pen' ? T.pen : T.bench).filter(c => !T.used.has(c)); if (!ids.length) return '';
+  const w = (c, x) => { const v = D.cards[c].wo && D.cards[c].wo[x]; return v ? `${avg3(v[0])}<span class="muted"> ${v[1]}</span>` : '—'; };
+  const hl = (x) => h === x ? ' class="hot"' : '';
+  const pitch = kind === 'pen';
+  const head = pitch ? `<th class="l">Bullpen</th><th>T</th><th>ERA</th><th>SV</th><th${hl('L')}>vs LHB</th><th${hl('R')}>vs RHB</th>` : `<th class="l">${kind === 'bat' ? 'Bench bats' : 'Bench gloves'}</th><th>Pos</th><th>B</th><th${hl('L')}>vs LHP</th><th${hl('R')}>vs RHP</th>`;
+  const rows = ids.map(c => { const d = D.cards[c]; return pitch
+    ? `<tr><td class="l">${plink(c)}${T.tired && T.tired.has(c) ? ' <span class="muted">tired</span>' : ''}</td><td>${d.th}</td><td>${d.ERA}</td><td>${d.SV}</td><td>${w(c, 'L')}</td><td>${w(c, 'R')}</td></tr>`
+    : `<tr><td class="l">${plink(c)}</td><td>${d.pos.join('/')}</td><td>${d.b || ''}</td><td>${w(c, 'L')}</td><td>${w(c, 'R')}</td></tr>`; }).join('');
+  return `<div class="tablewrap subtab"><table class="mini"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table><div class="muted" style="font-size:11px">wOBA (PA) from the card's real platoon split${h ? ' · highlighted column = current matchup' : ''}. Tap a name for the player page.</div></div>`;
+}
 function managePanel(g, GS) {
   const off = g.off, def = g.def, offU = !off.ai, defU = !def.ai;
   const b = g.bases, d = GS.dec;
@@ -910,24 +935,26 @@ function managePanel(g, GS) {
   let mgr = '';
   if (offU && !g.over) {
     const side = g.half;
-    const benchOpts = off.bench.filter(c => !off.used.has(c)).map(c => `<option value="${c}">${esc(tn(c))} (${D.cards[c].pos.join('/')}, B/R ${D.cards[c].BR})</option>`).join('');
+    const ph = D.cards[def.pitcher].th; const wv = (c, h) => woStr(D.cards[c].wo && D.cards[c].wo[h]);
+    const benchOpts = off.bench.filter(c => !off.used.has(c)).map(c => `<option value="${c}">${esc(tn(c))} (${D.cards[c].pos.join('/')}, B/R ${D.cards[c].BR}) · wOBA vs ${ph}HP ${wv(c, ph)}</option>`).join('');
     mgr += `<div class="grp"><span class="eyebrow">${esc(off.abbr)} offense — you</span>
       <button class="btn sm" data-act="dec" data-v="steal2" ${b[0] && !b[1] ? '' : 'disabled'}>Steal 2nd</button>
       <button class="btn sm" data-act="dec" data-v="steal3" ${b[1] && !b[2] ? '' : 'disabled'}>Steal 3rd</button>
       ${tog('bunt', 'Sacrifice bunt', b.some(Boolean) && g.outs < 2)}${tog('squeeze', 'Squeeze', b[2] && g.outs < 2)}${tog('hitRun', 'Hit and run', b[0] && g.outs < 2)}${tog('contact', 'Go on contact', b[2] && g.outs < 2)}</div>
       <div class="grp"><label class="fld">Base running <select id="stylesel">${['N', 'A', 'C'].map(s => `<option value="${s}" ${off.style === s ? 'selected' : ''}>${{ N: 'Normal', A: 'Aggressive', C: 'Conservative' }[s]}</option>`).join('')}</select></label><button class="btn sm" data-act="style" data-side="${side}">Set</button></div>
-      ${benchOpts ? `<div class="grp"><label class="fld">Replace <select id="phout">${off.lineup.map(x => `<option value="${x.cid}">${esc(tn(x.cid))} (${x.pos})</option>`).join('')}</select></label><label class="fld">With <select id="phin">${benchOpts}</select></label>
-      <button class="btn sm" data-act="ph" data-side="${side}" data-kind="Pinch hitter">Pinch hit / run</button></div>` : ''}`;
+      ${benchOpts ? `<div class="grp"><label class="fld">Replace <select id="phout">${off.lineup.map(x => `<option value="${x.cid}">${esc(tn(x.cid))} (${x.pos}) · vs ${ph}HP ${wv(x.cid, ph)}</option>`).join('')}</select></label><label class="fld">With <select id="phin">${benchOpts}</select></label>
+      <button class="btn sm" data-act="ph" data-side="${side}" data-kind="Pinch hitter">Pinch hit / run</button></div>${subTable(off, 'bat', ph)}` : ''}`;
   }
   if (defU && !g.over) {
     const side = 1 - g.half;
     const pen = def.pen.filter(c => !def.used.has(c)).map(c => { const p = D.cards[c]; return `<option value="${c}">${esc(tn(c))} ${p.th}HP · ERA ${p.ERA} · ${p.SV} SV · wOBA L ${woStr(p.wo && p.wo.L)} R ${woStr(p.wo && p.wo.R)}${def.tired && def.tired.has(c) ? ' · tired' : ''}</option>`; }).join('');
-    const benchOpts = def.bench.filter(c => !def.used.has(c)).map(c => `<option value="${c}">${esc(tn(c))} (${D.cards[c].pos.join('/')})</option>`).join('');
+    const dbh = (() => { const bc = g.batterCard(); return bc.b === 'B' ? (D.cards[def.pitcher].th === 'L' ? 'R' : 'L') : bc.b; })();
+    const benchOpts = def.bench.filter(c => !def.used.has(c)).map(c => `<option value="${c}">${esc(tn(c))} (${D.cards[c].pos.join('/')}) · wOBA L ${woStr(D.cards[c].wo && D.cards[c].wo.L)} R ${woStr(D.cards[c].wo && D.cards[c].wo.R)}</option>`).join('');
     mgr += `<div class="grp"><span class="eyebrow">${esc(def.abbr)} defense — you</span>${tog('ibb', 'Intentional walk', true)}${tog('infieldIn', 'Infield in', b[2])}
       <button class="btn sm ${def.guardLines ? 'on' : ''}" data-act="dec" data-v="guardLines">Guard the lines</button></div>
-      <div class="grp"><label class="fld">Bullpen <select id="pensel">${pen}</select></label><button class="btn sm" data-act="pchange" data-side="${side}" ${pen ? '' : 'disabled'}>Change pitcher</button></div>
+      <div class="grp"><label class="fld">Bullpen <select id="pensel">${pen}</select></label><button class="btn sm" data-act="pchange" data-side="${side}" ${pen ? '' : 'disabled'}>Change pitcher</button></div>${subTable(def, 'pen', dbh)}
       ${benchOpts ? `<div class="grp"><label class="fld">Replace <select id="phout2">${def.lineup.map(x => `<option value="${x.cid}">${esc(tn(x.cid))} (${x.pos})</option>`).join('')}</select></label><label class="fld">With <select id="phin2">${benchOpts}</select></label>
-      <button class="btn sm" data-act="dsub" data-side="${side}">Defensive sub</button></div>` : ''}`;
+      <button class="btn sm" data-act="dsub" data-side="${side}">Defensive sub</button></div>${subTable(def, 'bench')}` : ''}`;
   }
   const who = [0, 1].map(s => `<button class="btn sm ${g.teams[s].ai ? '' : 'on'}" data-act="autoside" data-side="${s}">${esc(g.teams[s].abbr)}: ${g.teams[s].ai ? 'AI manages' : 'You manage'}</button>`).join('');
   const pending = Object.keys(d).filter(k => d[k]);
@@ -1574,7 +1601,8 @@ function vPlayer() {
   st.recs.forEach(r => recRows(r).forEach(o => { if (o.pk === pk) rows.push(o); }));
   const cid = st.player.cid; const card = cid != null ? D.cards[cid] : null;
   const realCards = Object.keys(D.cards).map(Number).filter(i => D.cards[i] && pkOf(i) === pk);
-  const name = card ? card.n : realCards.length ? D.cards[realCards[0]].n : (rows[0] ? rows[0].n : pk.replace(/^n:/, ''));
+  const c0 = card || (realCards.length ? D.cards[realCards[0]] : null);
+  const name = c0 ? c0.n : (rows[0] ? rows[0].n : pk.replace(/^n:/, ''));
   const tot = { B: {}, P: {} }, byYr = {}, byKind = {};
   rows.forEach(o => { addLine(tot[o.t], o.t, o.x, o.r);
     const y = (byYr[o.t + (o.yr || '?')] = byYr[o.t + (o.yr || '?')] || { t: o.t, yr: o.yr || '?', tm: o.tm, a: {} }); addLine(y.a, o.t, o.x, o.r);
@@ -1583,51 +1611,83 @@ function vPlayer() {
     if (!tot[t].G) return '';
     const yrs = Object.values(byYr).filter(x => x.t === t).sort((a, b) => String(a.yr).localeCompare(String(b.yr)));
     const kinds = Object.values(byKind).filter(x => x.t === t);
-    return `<h3 style="margin-top:12px">${title}</h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l"></th>${head}</tr></thead><tbody>
-      <tr><td class="l"><b>All saved games</b></td>${line(tot[t])}</tr>
-      ${yrs.map(x => `<tr><td class="l">${x.yr} card · ${esc(x.tm)}</td>${line(x.a)}</tr>`).join('')}
-      ${kinds.map(x => `<tr><td class="l muted">${esc(KINDN[x.kind] || x.kind)}</td>${line(x.a)}</tr>`).join('')}</tbody></table></div>`;
+    return `<div class="psec"><h3>${title}</h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l"></th>${head}</tr></thead><tbody>
+      <tr class="tot"><td class="l"><b>All saved games</b></td>${line(tot[t])}</tr>
+      ${yrs.length > 1 ? `<tr class="grp"><td class="l" colspan="30">By card season</td></tr>` + yrs.map(x => `<tr><td class="l">${x.yr} · ${esc(x.tm)}</td>${line(x.a)}</tr>`).join('') : ''}
+      ${kinds.length > 1 ? `<tr class="grp"><td class="l" colspan="30">By mode</td></tr>` + kinds.map(x => `<tr><td class="l">${esc(KINDN[x.kind] || x.kind)}</td>${line(x.a)}</tr>`).join('') : ''}</tbody></table></div></div>`;
   };
   const log = rows.slice().sort((a, b) => recSort(b.r, a.r)).slice(0, st.plLog || 40).map(o => {
     const x = o.x; const line = o.t === 'B' ? `${x.H}-${x.AB}${x.HR ? `, ${x.HR} HR` : ''}${x.RBI ? `, ${x.RBI} RBI` : ''}${x.BB ? `, ${x.BB} BB` : ''}${x.SO ? `, ${x.SO} K` : ''}${x.SB ? `, ${x.SB} SB` : ''}`
       : `${ipStr(x.OUTS)} IP, ${x.H} H, ${x.ER} ER, ${x.BB} BB, ${x.SO} K${x.dec ? ` (${x.dec})` : ''}`;
-    return `<div class="gline"><span><span class="muted">${o.r.date ? fmtDate(o.r.date) + ' · ' : ''}${esc(o.r.label)}</span><br><b>${esc(o.tm)} ${o.home ? 'vs' : '@'} ${esc(o.opp)}</b> · ${o.r.box[0].abbr} ${o.r.score[0]}, ${o.r.box[1].abbr} ${o.r.score[1]}</span><span>${line}</span><span></span></div>`;
+    const won = o.r.score[o.home ? 1 : 0] > o.r.score[o.home ? 0 : 1];
+    return `<div class="gline"><span><span class="muted">${o.r.date ? fmtDate(o.r.date) + ' · ' : ''}${esc(o.r.label)}</span><br><b>${esc(o.tm)} ${o.home ? 'vs' : '@'} ${esc(o.opp)}</b> · <span class="${won ? 'wl-w' : 'wl-l'}">${won ? 'W' : 'L'}</span> ${o.r.score[o.home ? 1 : 0]}-${o.r.score[o.home ? 0 : 1]}</span><span>${line}</span><span></span></div>`;
   }).join('');
-  const cardHtml = (card ? [cid] : realCards.slice(0, 2)).map(i => D.cards[i].t === 'P' ? pitcherCard(D.cards[i]) : batterCard(D.cards[i])).join('');
-  return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">Player</div><h2>${esc(B.titleName(name))}</h2></div><button class="btn sm" data-act="player-back">Back</button></div>
-    ${rows.length ? '' : '<p class="muted">No games in your Scorebook for this player yet. Play or simulate a game with him and his Box Seat stats will build up here.</p>'}
-    ${sec('B', 'Batting in your games', BH, batLine)}${sec('P', 'Pitching in your games', PH, pitLine)}
-    ${rows.length ? `<h3 style="margin-top:12px">Game log</h3><div class="schedule">${log}</div>${rows.length > (st.plLog || 40) ? '<button class="btn sm" data-act="pl-more">Show more games</button>' : ''}` : ''}
-    ${realStatsHtml(pk)}
-    ${cardHtml ? `<h3 style="margin-top:12px">Card</h3><div class="cards2">${cardHtml}</div>` : ''}</div></div>`;
+  const isP = c0 ? c0.t === 'P' : (tot.P.G || 0) > (tot.B.G || 0);
+  const seenC = new Set(); const shown = (card ? [cid] : []).concat(realCards.slice().sort((a, b) => (cardYr(b) || 0) - (cardYr(a) || 0) || (D.cards[a].t === (isP ? 'P' : 'B') ? -1 : 1))).filter(i => { const k = cardYr(i) + D.cards[i].t; if (seenC.has(k)) return false; seenC.add(k); return true; });
+  const cardHtml = shown.slice(0, st.plCards || 2).map(i => `<div><div class="eyebrow" style="margin-bottom:4px">${cardYr(i)} ${esc(String(tName(D.cards[i].tm)).replace(/^\d{4} /, ''))}</div>${D.cards[i].t === 'P' ? pitcherCard(D.cards[i]) : batterCard(D.cards[i])}</div>`).join('');
+  const R = realParts(pk, isP);
+  // hero
+  const yrsAll = [...new Set(realCards.map(cardYr))].sort();
+  const teams = [...new Set(realCards.map(i => { const t = D.teams[D.cards[i].tm]; return t ? t.abbr : String(D.cards[i].tm).replace(/^\d{4}-/, ''); }))];
+  const bio = c0 ? [c0.t === 'P' ? `Throws ${c0.th}` : `Bats ${c0.b}`, c0.t !== 'P' && c0.pos && c0.pos.length ? c0.pos.join(' / ') : (c0.t === 'P' ? (c0.GS >= Math.max(3, 0.5 * (c0.G || 0)) ? 'Starting pitcher' : 'Relief pitcher') : '')].filter(Boolean).join(' · ') : '';
+  const tile = (lbl, v, sub) => v == null || v === '' ? '' : `<div class="tile"><div class="eyebrow">${lbl}</div><div class="tv">${v}</div>${sub ? `<div class="muted ts">${sub}</div>` : ''}</div>`;
+  let tiles = '';
+  const T = isP ? tot.P : tot.B;
+  if (T.G) { if (isP) { const ip = T.OUTS / 3; tiles += tile('Your games', T.G, `${ipStr(T.OUTS)} IP`) + tile('ERA', ip ? (T.ER * 9 / ip).toFixed(2) : '—', `${T.W || 0}-${T.L || 0}${T.SV ? `, ${T.SV} SV` : ''}`) + tile('K / BB', `${T.SO} / ${T.BB}`, wobaPit(T) != null ? 'wOBA ' + avg3(wobaPit(T)) : ''); }
+    else { const avg = T.AB ? T.H / T.AB : 0; const w = wobaBat(T); tiles += tile('Your games', T.G, `${T.PA} PA`) + tile('AVG', avg3(avg), `${T.HR} HR · ${T.RBI} RBI`) + tile('wOBA', w == null ? '—' : avg3(w), `${T.BB} BB · ${T.SO} K`); } }
+  if (R.last) { const [y, x] = R.last; tiles += isP ? tile(`${y} MLB`, x.ERA != null ? (+x.ERA).toFixed(2) + ' ERA' : '', `${x.IP != null ? (+x.IP).toFixed(1) + ' IP · ' : ''}FIP ${x.FIP != null ? (+x.FIP).toFixed(2) : '—'}`) + tile(`${y} WAR`, x.WAR != null ? (+x.WAR).toFixed(1) : '', 'computed fWAR-style')
+    : tile(`${y} MLB`, x.wOBA != null ? avg3(x.wOBA) + ' wOBA' : '', `${x.PA} PA · ${x.HR} HR · wRC+ ${x['wRC+'] != null ? Math.round(x['wRC+']) : '—'}`) + tile(`${y} WAR`, x.WAR != null ? (+x.WAR).toFixed(1) : '', 'computed fWAR-style'); }
+  if (c0 && c0.wo) tiles += tile(`Card platoon`, `${woStr(c0.wo.L)} / ${woStr(c0.wo.R)}`, `wOBA ${c0.t === 'P' ? 'vs LHB / RHB' : 'vs LHP / RHP'}`);
+  // sections
+  const S = [];
+  S.push(['ov', 'Overview', `<div class="tiles">${tiles || '<p class="muted">No stats yet.</p>'}</div>${cardHtml ? `<div class="psec"><h3>Card${shown.length > 1 ? 's' : ''}</h3><div class="cards2">${cardHtml}</div>${shown.length > (st.plCards || 2) ? `<button class="btn sm" data-act="pl-cards">Show all ${shown.length} cards</button>` : ''}</div>` : ''}`]);
+  if (rows.length) S.push(['box', 'Box Seat stats', isP ? sec('P', 'Pitching', PH, pitLine) + sec('B', 'Batting', BH, batLine) : sec('B', 'Batting', BH, batLine) + sec('P', 'Pitching', PH, pitLine)]);
+  if (rows.length) S.push(['log', `Game log <span class="cnt">${rows.length}</span>`, `<div class="schedule">${log}</div>${rows.length > (st.plLog || 40) ? '<button class="btn sm" data-act="pl-more">Show more games</button>' : ''}`]);
+  if (R.loading) S.push(['mlb', 'MLB stats', '<p class="muted">Loading real stats…</p>']);
+  if (R.std) S.push(['mlb', 'MLB stats', R.std]);
+  if (R.sc) S.push(['sc', 'Statcast', R.sc]);
+  if (R.spl) S.push(['spl', 'Platoon splits', R.spl]);
+  const cur = S.find(x => x[0] === st.ptab) ? st.ptab : 'ov';
+  const body = S.find(x => x[0] === cur)[2];
+  return `<div class="section"><div class="panel phero">
+      <div class="row" style="justify-content:space-between;align-items:flex-start"><div><div class="eyebrow">${isP ? 'Pitcher' : 'Hitter'}${teams.length ? ' · ' + teams.slice(0, 6).map(esc).join(', ') : ''}</div><h2 class="pname">${esc(B.titleName(name))}</h2>
+        <div class="muted">${[bio, yrsAll.length ? `${yrsAll.length > 1 ? yrsAll.length + ' card seasons, ' + yrsAll[0] + '–' + yrsAll[yrsAll.length - 1] : yrsAll[0] + ' card'}` : ''].filter(Boolean).join(' · ')}</div></div>
+        <button class="btn sm" data-act="player-back">Back</button></div>
+      <nav class="ptabs" role="tablist">${S.map(x => `<button role="tab" class="${x[0] === cur ? 'on' : ''}" data-act="ptab" data-v="${x[0]}">${x[1]}</button>`).join('')}</nav></div>
+    <div class="panel pbody">${!rows.length && cur === 'ov' ? '<p class="muted">No games in your Scorebook for this player yet. Play or simulate a game with him and his Box Seat stats will build up here.</p>' : ''}${body}</div></div>`;
 }
-// real MLB stats from FanGraphs and Baseball Savant (2010-2026), one file per first letter of the Retrosheet id
+// real MLB stats from FanGraphs-style calculations and Baseball Savant (2010-2026), one file per first letter of the Retrosheet id
 const RS = {};
-function realStatsHtml(pk) {
-  if (!pk || pk.startsWith('n:')) return '';
+function realParts(pk, wantP) {
+  const out = {};
+  if (!pk || pk.startsWith('n:')) return out;
   const L = pk[0].toLowerCase();
   if (RS[L] === undefined) { RS[L] = null; fetch(`seasons/stats/${L}.json`).then(r => r.ok ? r.json() : {}).catch(() => ({})).then(d => { RS[L] = d || {}; if (st.tab === 'player') render(); }); }
-  if (!RS[L]) return RS[L] === null ? '<p class="muted" style="margin-top:12px">Loading real stats…</p>' : '';
-  const P = RS[L][pk]; if (!P) return '';
+  if (!RS[L]) { if (RS[L] === null) out.loading = true; return out; }
+  const P = RS[L][pk]; if (!P) return out;
   const yrs = Object.keys(P).sort();
   const f = (v, d, pct) => v == null ? '' : pct ? (v * 100).toFixed(1) : d === 3 ? avg3(v) : (+v).toFixed(d);
   const tbl = (title, src, cols, tag) => {
     const rows = yrs.filter(y => P[y][tag]); if (!rows.length) return '';
-    return `<h3 style="margin-top:12px">${title} <span class="muted" style="font-size:12px;font-weight:400">${src}</span></h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l">Year</th>${cols.map(c => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map(y => `<tr><td class="l">${y}</td>${cols.map(c => `<td>${f(P[y][tag][c[1]], c[2], c[3])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return `<div class="psec"><h3>${title} <span class="src">${src}</span></h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l">Year</th>${cols.map(c => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map(y => `<tr><td class="l">${y}</td>${cols.map(c => `<td>${f(P[y][tag][c[1]], c[2], c[3])}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;
   };
   const split = (title, tags, labels) => {
     const rows = []; yrs.forEach(y => tags.forEach((t, i) => { if (P[y][t]) rows.push([y, labels[i], P[y][t]]); }));
     if (!rows.length) return '';
-    return `<h3 style="margin-top:12px">${title} <span class="muted" style="font-size:12px;font-weight:400">real MLB, computed from MLB data</span></h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l">Year</th><th class="l">Split</th><th>${tags[0][0] === 'h' ? 'PA' : 'BF'}</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th><th>BB%</th><th>K%</th><th>HR</th><th>wOBA</th></tr></thead><tbody>${rows.map(([y, l, x], i) => `<tr${i % 2 ? '' : ' style="border-top:1px solid var(--line, #ddd)"'}><td class="l">${i % 2 ? '' : y}</td><td class="l">${l}</td><td>${x.PA}</td><td>${f(x.AVG, 3)}</td><td>${f(x.OBP, 3)}</td><td>${f(x.SLG, 3)}</td><td>${f(x.OPS, 3)}</td><td>${f(x['BB%'], 1, 1)}</td><td>${f(x['K%'], 1, 1)}</td><td>${x.HR}</td><td>${f(x.wOBA, 3)}</td></tr>`).join('')}</tbody></table></div>`;
+    return `<div class="psec"><h3>${title} <span class="src">real MLB, computed from MLB data</span></h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l">Year</th><th class="l">Split</th><th>${tags[0][0] === 'h' ? 'PA' : 'BF'}</th><th>AVG</th><th>OBP</th><th>SLG</th><th>OPS</th><th>BB%</th><th>K%</th><th>HR</th><th>wOBA</th></tr></thead><tbody>${rows.map(([y, l, x], i) => `<tr${rows[i - 1] && rows[i - 1][0] !== y ? ' class="ysep"' : ''}><td class="l">${rows[i - 1] && rows[i - 1][0] === y ? '' : y}</td><td class="l">${l}</td><td>${x.PA}</td><td>${f(x.AVG, 3)}</td><td>${f(x.OBP, 3)}</td><td>${f(x.SLG, 3)}</td><td>${f(x.OPS, 3)}</td><td>${f(x['BB%'], 1, 1)}</td><td>${f(x['K%'], 1, 1)}</td><td>${x.HR}</td><td>${f(x.wOBA, 3)}</td></tr>`).join('')}</tbody></table></div></div>`;
   };
   const batPA = Math.max(0, ...yrs.map(y => (P[y].fb && P[y].fb.PA) || 0)), isPit = yrs.some(y => P[y].fp && P[y].fp.IP >= 10);
   const showBat = !isPit || batPA >= 150;
-  return (showBat ? tbl('Real MLB batting', 'FanGraphs-style stats, computed from MLB data', [['PA', 'PA', 0], ['HR', 'HR', 0], ['SB', 'SB', 0], ['BB%', 'BB%', 1, 1], ['K%', 'K%', 1, 1], ['ISO', 'ISO', 3], ['BABIP', 'BABIP', 3], ['AVG', 'AVG', 3], ['OBP', 'OBP', 3], ['SLG', 'SLG', 3], ['wOBA', 'wOBA', 3], ['wRC+', 'wRC+', 0], ['WAR', 'WAR', 1]], 'fb')
-    + tbl('Statcast batting', 'Baseball Savant (2015 on)', [['PA', 'pa', 0], ['xBA', 'xba', 3], ['xSLG', 'xslg', 3], ['xwOBA', 'xwoba', 3], ['EV', 'exit_velocity_avg', 1], ['LA', 'launch_angle_avg', 1], ['Barrel%', 'barrel_batted_rate', 1], ['HardHit%', 'hard_hit_percent', 1], ['Whiff%', 'whiff_percent', 1], ['Chase%', 'oz_swing_percent', 1], ['Sprint', 'sprint_speed', 1], ['OAA', 'oaa', 0], ['FRP', 'frp', 0]], 'sb')
-    + split('Batting platoon splits', ['hl', 'hr'], ['vs LHP', 'vs RHP']) : '')
-    + tbl('Real MLB pitching', 'FanGraphs-style stats, computed from MLB data', [['G', 'G', 0], ['GS', 'GS', 0], ['W', 'W', 0], ['L', 'L', 0], ['SV', 'SV', 0], ['IP', 'IP', 1], ['ERA', 'ERA', 2], ['FIP', 'FIP', 2], ['K%', 'K%', 1, 1], ['BB%', 'BB%', 1, 1], ['K-BB%', 'K-BB%', 1, 1], ['HR/9', 'HR/9', 2], ['BABIP', 'BABIP', 3], ['LOB%', 'LOB%', 1, 1], ['wOBA', 'wOBA', 3], ['WAR', 'WAR', 1]], 'fp')
-    + tbl('Statcast pitching', 'Baseball Savant (2015 on)', [['BF', 'pa', 0], ['xERA', 'xera', 2], ['xBA', 'xba', 3], ['xSLG', 'xslg', 3], ['xwOBA', 'xwoba', 3], ['EV', 'exit_velocity_avg', 1], ['Barrel%', 'barrel_batted_rate', 1], ['HardHit%', 'hard_hit_percent', 1], ['Whiff%', 'whiff_percent', 1], ['Chase%', 'oz_swing_percent', 1], ['GB%', 'groundballs_percent', 1]], 'sp')
-    + split('Pitching platoon splits', ['pl', 'pr'], ['vs LHB', 'vs RHB']);
+  const fb = tbl('Batting', 'FanGraphs-style, computed from MLB data', [['PA', 'PA', 0], ['HR', 'HR', 0], ['SB', 'SB', 0], ['BB%', 'BB%', 1, 1], ['K%', 'K%', 1, 1], ['ISO', 'ISO', 3], ['BABIP', 'BABIP', 3], ['AVG', 'AVG', 3], ['OBP', 'OBP', 3], ['SLG', 'SLG', 3], ['wOBA', 'wOBA', 3], ['wRC+', 'wRC+', 0], ['WAR', 'WAR', 1]], 'fb');
+  const fp = tbl('Pitching', 'FanGraphs-style, computed from MLB data', [['G', 'G', 0], ['GS', 'GS', 0], ['W', 'W', 0], ['L', 'L', 0], ['SV', 'SV', 0], ['IP', 'IP', 1], ['ERA', 'ERA', 2], ['FIP', 'FIP', 2], ['K%', 'K%', 1, 1], ['BB%', 'BB%', 1, 1], ['K-BB%', 'K-BB%', 1, 1], ['HR/9', 'HR/9', 2], ['BABIP', 'BABIP', 3], ['LOB%', 'LOB%', 1, 1], ['wOBA', 'wOBA', 3], ['WAR', 'WAR', 1]], 'fp');
+  const sb = tbl('Statcast batting', 'Baseball Savant, 2015 on', [['PA', 'pa', 0], ['xBA', 'xba', 3], ['xSLG', 'xslg', 3], ['xwOBA', 'xwoba', 3], ['EV', 'exit_velocity_avg', 1], ['LA', 'launch_angle_avg', 1], ['Barrel%', 'barrel_batted_rate', 1], ['HardHit%', 'hard_hit_percent', 1], ['Whiff%', 'whiff_percent', 1], ['Chase%', 'oz_swing_percent', 1], ['Sprint', 'sprint_speed', 1], ['OAA', 'oaa', 0], ['FRP', 'frp', 0]], 'sb');
+  const sp = tbl('Statcast pitching', 'Baseball Savant, 2015 on', [['BF', 'pa', 0], ['xERA', 'xera', 2], ['xBA', 'xba', 3], ['xSLG', 'xslg', 3], ['xwOBA', 'xwoba', 3], ['EV', 'exit_velocity_avg', 1], ['Barrel%', 'barrel_batted_rate', 1], ['HardHit%', 'hard_hit_percent', 1], ['Whiff%', 'whiff_percent', 1], ['Chase%', 'oz_swing_percent', 1], ['GB%', 'groundballs_percent', 1]], 'sp');
+  const hs = split('Batting splits', ['hl', 'hr'], ['vs LHP', 'vs RHP']), ps = split('Pitching splits', ['pl', 'pr'], ['vs LHB', 'vs RHB']);
+  const pfirst = wantP != null ? wantP : isPit && !(batPA >= 150 && !yrs.some(y => P[y].fp && P[y].fp.IP >= 50));
+  const ord = (a, b) => pfirst ? b + a : a + b;
+  out.std = ord(showBat ? fb : '', fp); out.sc = ord(showBat ? sb : '', sp); out.spl = ord(showBat ? hs : '', ps);
+  const lastY = yrs.filter(y => pfirst ? P[y].fp : P[y].fb).pop(); if (lastY) out.last = [lastY, pfirst ? P[lastY].fp : P[lastY].fb];
+  return out;
 }
 async function backupAll() {
   const games = await ARC.all(); const ls = {};

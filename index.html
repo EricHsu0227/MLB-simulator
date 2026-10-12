@@ -145,6 +145,21 @@ tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 45%, tran
 .ser .t.win { font-weight: 700 }
 .schedule { display: grid; gap: 4px }
 .gline { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel) }
+.phero .pname { font-size: 28px; margin: 2px 0 4px }
+.ptabs { display: flex; gap: 4px; margin-top: 12px; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none }
+.ptabs button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 12px; font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap }
+.ptabs button.on { color: var(--ink); border-bottom-color: var(--felt) }
+.ptabs .cnt { font-size: 11px; background: var(--line); border-radius: 8px; padding: 1px 6px; margin-left: 2px }
+.phero { border-bottom-left-radius: 0; border-bottom-right-radius: 0; padding-bottom: 0 } .pbody { border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0 }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 8px }
+.tile { border: 1px solid var(--line); border-radius: 6px; padding: 10px } .tile .tv { font-size: 22px; font-weight: 700; margin-top: 2px } .tile .ts { font-size: 12px }
+.psec + .psec { margin-top: 18px } .psec h3 { margin: 0 0 6px } .psec .src { color: var(--muted); font-size: 12px; font-weight: 400 }
+tr.tot td { font-weight: 700 } tr.grp td { color: var(--muted); font: 700 10px var(--font-body); letter-spacing: 1.2px; text-transform: uppercase; padding-top: 8px } tr.ysep td { border-top: 1px solid var(--line) }
+.wl-w { color: var(--felt); font-weight: 700 } .wl-l { color: var(--hit); font-weight: 700 }
+.cfm { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 16px }
+.cfm-box { background: var(--bg); color: var(--ink); border-radius: 8px; padding: 18px; max-width: 380px; width: 100%; box-shadow: 0 8px 30px rgba(0,0,0,.3) }
+.cfm-box p { margin: 0 0 14px } .cfm-box .row { justify-content: flex-end }
+.subtab { margin: 4px 0 8px } .subtab th.hot { color: var(--hit); text-decoration: underline }
 .toast { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 5px; z-index: 50; font-weight: 600 }
 .loading { padding: 60px 0; text-align: center; color: var(--muted); font: 600 18px var(--font-display) }
 .hero { padding: 26px 0 6px; display: grid; gap: 8px; max-width: 760px }
