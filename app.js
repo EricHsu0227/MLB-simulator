@@ -1551,10 +1551,30 @@ function vPlayer() {
   }).join('');
   const cardHtml = (card ? [cid] : realCards.slice(0, 2)).map(i => D.cards[i].t === 'P' ? pitcherCard(D.cards[i]) : batterCard(D.cards[i])).join('');
   return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between"><div><div class="eyebrow">Player</div><h2>${esc(B.titleName(name))}</h2></div><button class="btn sm" data-act="player-back">Back</button></div>
-    ${rows.length ? '' : '<p class="muted">No saved games for this player yet. Play or simulate a game with him and his stats will build up here.</p>'}
+    ${rows.length ? '' : '<p class="muted">No games in your Scorebook for this player yet. Play or simulate a game with him and his Box Seat stats will build up here.</p>'}
     ${sec('B', 'Batting in your games', BH, batLine)}${sec('P', 'Pitching in your games', PH, pitLine)}
     ${rows.length ? `<h3 style="margin-top:12px">Game log</h3><div class="schedule">${log}</div>${rows.length > (st.plLog || 40) ? '<button class="btn sm" data-act="pl-more">Show more games</button>' : ''}` : ''}
+    ${realStatsHtml(pk)}
     ${cardHtml ? `<h3 style="margin-top:12px">Card</h3><div class="cards2">${cardHtml}</div>` : ''}</div></div>`;
+}
+// real MLB stats from FanGraphs and Baseball Savant (2010-2026), one file per first letter of the Retrosheet id
+const RS = {};
+function realStatsHtml(pk) {
+  if (!pk || pk.startsWith('n:')) return '';
+  const L = pk[0].toLowerCase();
+  if (RS[L] === undefined) { RS[L] = null; fetch(`seasons/stats/${L}.json`).then(r => r.ok ? r.json() : {}).catch(() => ({})).then(d => { RS[L] = d || {}; if (st.tab === 'player') render(); }); }
+  if (!RS[L]) return RS[L] === null ? '<p class="muted" style="margin-top:12px">Loading real stats…</p>' : '';
+  const P = RS[L][pk]; if (!P) return '';
+  const yrs = Object.keys(P).sort();
+  const f = (v, d, pct) => v == null ? '' : pct ? (v * 100).toFixed(1) : d === 3 ? avg3(v) : (+v).toFixed(d);
+  const tbl = (title, src, cols, tag) => {
+    const rows = yrs.filter(y => P[y][tag]); if (!rows.length) return '';
+    return `<h3 style="margin-top:12px">${title} <span class="muted" style="font-size:12px;font-weight:400">${src}</span></h3><div class="tablewrap"><table class="mini"><thead><tr><th class="l">Year</th>${cols.map(c => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map(y => `<tr><td class="l">${y}</td>${cols.map(c => `<td>${f(P[y][tag][c[1]], c[2], c[3])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  };
+  return tbl('Real MLB batting', 'FanGraphs-style stats, computed from MLB data', [['PA', 'PA', 0], ['HR', 'HR', 0], ['SB', 'SB', 0], ['BB%', 'BB%', 1, 1], ['K%', 'K%', 1, 1], ['ISO', 'ISO', 3], ['BABIP', 'BABIP', 3], ['AVG', 'AVG', 3], ['OBP', 'OBP', 3], ['SLG', 'SLG', 3], ['wOBA', 'wOBA', 3], ['wRC+', 'wRC+', 0], ['WAR', 'WAR', 1]], 'fb')
+    + tbl('Statcast batting', 'Baseball Savant (2015 on)', [['PA', 'pa', 0], ['xBA', 'xba', 3], ['xSLG', 'xslg', 3], ['xwOBA', 'xwoba', 3], ['EV', 'exit_velocity_avg', 1], ['LA', 'launch_angle_avg', 1], ['Barrel%', 'barrel_batted_rate', 1], ['HardHit%', 'hard_hit_percent', 1], ['Whiff%', 'whiff_percent', 1], ['Chase%', 'oz_swing_percent', 1], ['Sprint', 'sprint_speed', 1], ['OAA', 'oaa', 0], ['FRP', 'frp', 0]], 'sb')
+    + tbl('Real MLB pitching', 'FanGraphs-style stats, computed from MLB data', [['G', 'G', 0], ['GS', 'GS', 0], ['W', 'W', 0], ['L', 'L', 0], ['SV', 'SV', 0], ['IP', 'IP', 1], ['ERA', 'ERA', 2], ['FIP', 'FIP', 2], ['K%', 'K%', 1, 1], ['BB%', 'BB%', 1, 1], ['K-BB%', 'K-BB%', 1, 1], ['HR/9', 'HR/9', 2], ['BABIP', 'BABIP', 3], ['LOB%', 'LOB%', 1, 1], ['WAR', 'WAR', 1]], 'fp')
+    + tbl('Statcast pitching', 'Baseball Savant (2015 on)', [['BF', 'pa', 0], ['xERA', 'xera', 2], ['xBA', 'xba', 3], ['xSLG', 'xslg', 3], ['xwOBA', 'xwoba', 3], ['EV', 'exit_velocity_avg', 1], ['Barrel%', 'barrel_batted_rate', 1], ['HardHit%', 'hard_hit_percent', 1], ['Whiff%', 'whiff_percent', 1], ['Chase%', 'oz_swing_percent', 1], ['GB%', 'groundballs_percent', 1]], 'sp');
 }
 async function backupAll() {
   const games = await ARC.all(); const ls = {};
@@ -1638,7 +1658,7 @@ function vCards() {
   const park = D.parks[c];
   return `<div class="section"><div class="panel"><div class="row" style="justify-content:space-between;align-items:end"><div><div class="eyebrow">${MIX ? (team(st.cardsTeam).yr + ' card set') : SEASON + ' card set'}</div><h2>${esc(tName(c))}</h2></div>
     <label class="fld">Season <select data-chg="cards-yr">${yrOptions(yrOf(c))}</select></label><label class="fld">Team <select data-chg="cards-team">${MIXKEYS(yrOf(c)).map(x => `<option value="${x}" ${x === c ? 'selected' : ''}>${esc(tName(x).replace(/^\d+ /, ''))}</option>`).join('')}</select></label></div>
-    <div class="grid2" style="margin-top:10px"><div><h3>Default lineups</h3><table class="mini"><thead><tr><th class="l">vs RHP</th><th class="l">vs LHP</th></tr></thead><tbody>${T.luR.map((x, i) => `<tr><td class="l">${esc(tn(x[0]))} <span class="muted">${B.NUMPOS[x[1]]}</span></td><td class="l">${T.luL[i] ? esc(tn(T.luL[i][0])) + ` <span class="muted">${B.NUMPOS[T.luL[i][1]]}</span>` : ''}</td></tr>`).join('')}</tbody></table>
+    <div class="grid2" style="margin-top:10px"><div><h3>Default lineups</h3><table class="mini"><thead><tr><th class="l">vs RHP</th><th class="l">vs LHP</th></tr></thead><tbody>${T.luR.map((x, i) => `<tr><td class="l">${plink(x[0])} <span class="muted">${B.NUMPOS[x[1]]}</span></td><td class="l">${T.luL[i] ? plink(T.luL[i][0]) + ` <span class="muted">${B.NUMPOS[T.luL[i][1]]}</span>` : ''}</td></tr>`).join('')}</tbody></table>
       <p class="muted" style="font-size:13px">Rotation: ${T.rot.map(tn).map(esc).join(', ')}</p></div>
       <div><h3>${esc(park.name)}</h3><div class="kv"><span class="muted">Home run ratings</span><span>LF ${B.fmtS(park.hrL)} · CF ${B.fmtS(park.hrC)} · RF ${B.fmtS(park.hrR)}</span>
         <span class="muted">Dimensions</span><span>${Object.entries(park.dims).map(([k, v]) => `${k.toLowerCase()} ${v[0]} ft${v[1] ? ' (' + v[1] + ' ft wall)' : ''}`).join(' · ')}</span>
