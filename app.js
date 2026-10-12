@@ -1625,7 +1625,8 @@ function vPlayer() {
   const isP = c0 ? c0.t === 'P' : (tot.P.G || 0) > (tot.B.G || 0);
   const seenC = new Set(); const shown = (card ? [cid] : []).concat(realCards.slice().sort((a, b) => (cardYr(b) || 0) - (cardYr(a) || 0) || (D.cards[a].t === (isP ? 'P' : 'B') ? -1 : 1))).filter(i => { const k = cardYr(i) + D.cards[i].t; if (seenC.has(k)) return false; seenC.add(k); return true; });
   const cardHtml = shown.slice(0, st.plCards || 2).map(i => `<div><div class="eyebrow" style="margin-bottom:4px">${cardYr(i)} ${esc(String(tName(D.cards[i].tm)).replace(/^\d{4} /, ''))}</div>${D.cards[i].t === 'P' ? pitcherCard(D.cards[i]) : batterCard(D.cards[i])}</div>`).join('');
-  const R = realParts(pk, isP);
+  const viewYr = card ? cardYr(cid) : (shown.length ? cardYr(shown[0]) : null);
+  const R = realParts(pk, isP, viewYr);
   // hero
   const yrsAll = [...new Set(realCards.map(cardYr))].sort();
   const teams = [...new Set(realCards.map(i => { const t = D.teams[D.cards[i].tm]; return t ? t.abbr : String(D.cards[i].tm).replace(/^\d{4}-/, ''); }))];
@@ -1658,7 +1659,7 @@ function vPlayer() {
 }
 // real MLB stats from FanGraphs-style calculations and Baseball Savant (2010-2026), one file per first letter of the Retrosheet id
 const RS = {};
-function realParts(pk, wantP) {
+function realParts(pk, wantP, wantYr) {
   const out = {};
   if (!pk || pk.startsWith('n:')) return out;
   const L = pk[0].toLowerCase();
@@ -1686,7 +1687,10 @@ function realParts(pk, wantP) {
   const pfirst = wantP != null ? wantP : isPit && !(batPA >= 150 && !yrs.some(y => P[y].fp && P[y].fp.IP >= 50));
   const ord = (a, b) => pfirst ? b + a : a + b;
   out.std = ord(showBat ? fb : '', fp); out.sc = ord(showBat ? sb : '', sp); out.spl = ord(showBat ? hs : '', ps);
-  const lastY = yrs.filter(y => pfirst ? P[y].fp : P[y].fb).pop(); if (lastY) out.last = [lastY, pfirst ? P[lastY].fp : P[lastY].fb];
+  // the overview tiles follow the season of the card being viewed (closest earlier season if that year has no MLB line)
+  const have = yrs.filter(y => pfirst ? P[y].fp : P[y].fb);
+  const pickY = wantYr != null ? (have.includes(String(wantYr)) ? String(wantYr) : have.filter(y => +y <= +wantYr).pop() || have[have.length - 1]) : have[have.length - 1];
+  if (pickY) out.last = [pickY, pfirst ? P[pickY].fp : P[pickY].fb];
   return out;
 }
 async function backupAll() {
