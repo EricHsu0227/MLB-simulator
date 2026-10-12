@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#1f5a3c">
 <meta name="description" content="Box Seat Baseball Under The Hood rules with the 2025 card set: season replay, postseason, exhibition and real 2025 games.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Box Seat">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -311,6 +315,49 @@ a.plk { color: inherit; text-decoration: underline dotted; text-underline-offset
 .yrpick { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; opacity: .95 }
 .yrpick select { font: 600 14px var(--font-body); padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,.4); background: rgba(255,255,255,.12); color: var(--felt-ink) }
 .yrpick select option { color: #111 }
+</style>
+<style id="mobile-fit">
+/* ---------- phone fit (keeps every control on screen, no zoom-on-tap) ---------- */
+button, .btn, select, label.chk, nav.tabs button, .ltabs button { touch-action: manipulation }
+@media (max-width: 600px) {
+  select, input, textarea, .yrpick select { font-size: 16px }   /* iPhone zooms in on anything smaller */
+  .btn { min-height: 40px }
+  nav.tabs { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
+             mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%); padding-inline: 6px }
+  nav.tabs button { padding: 8px 11px }
+  /* game controls: big Pitch button + Auto-play, then the rest, all visible */
+  .abar-in { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; gap: 6px; padding: 7px }
+  .abar-in .btn { width: 100%; flex: initial; padding: 9px 4px; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .abar-in #pitchbtn { grid-column: span 2; font-size: 18px; min-height: 48px }
+  .abar-in [data-act="auto"] { min-height: 48px }
+  .abar-in #skipbtn { display: none !important }   /* the Pitch button turns into Skip while a play animates */
+  .abar-in .spd { display: flex; min-width: 0; font-size: 0 }   /* hide the word Speed, keep the menu */
+  .abar-in .spd select { width: 100%; min-height: 40px; padding: 6px 4px; font-size: 15px }
+  .abar-in .stepchk { grid-column: 1 / -1; order: 9; justify-content: center; font-size: 13px; min-height: 0; display: flex; align-items: center; gap: 6px }
+  .ltabs button { flex: 1 1 auto; padding: 9px 6px }
+  /* team pickers: room for "2025 (official)" and the club name */
+  .yrteam { display: flex; width: 100%; max-width: min(440px, calc(100vw - 44px)) }
+  label.fld:has(.yrteam) { max-width: 100%; min-width: 0 }
+  .yrteam select:first-child { width: auto; flex: 0 0 9.4em }
+  .yrteam select:last-child { flex: 1 1 auto; min-width: 0 }
+  /* wide reference tables scroll inside their box instead of running off the screen */
+  table.mini { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch }
+  .tablewrap table.mini, .scroll table.mini { display: table; max-width: none; overflow: visible }
+  .kv { grid-template-columns: minmax(0, max-content) minmax(0, 1fr) }
+  /* stat tables that scroll sideways keep their first column (year / name) in view */
+  .tablewrap table td:first-child, .tablewrap table th:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); box-shadow: 1px 0 0 var(--line) }
+}
+/* phone held sideways: one-line header that scrolls away, so the field gets the height */
+@media (max-height: 500px) and (orientation: landscape) {
+  header.top { position: static }
+  header.top .in { padding: 6px 12px; gap: 10px; flex-wrap: nowrap }
+  .brand small { display: none }
+  nav.tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; min-width: 0 }
+  nav.tabs button { flex: none; white-space: nowrap; padding: 5px 10px }
+  select, input, textarea, .yrpick select { font-size: 16px }
+  .abar-in { padding: 5px; gap: 6px }
+  .abar-in .btn { padding: 6px 10px }
+}
 </style>
 </head>
 <body>
