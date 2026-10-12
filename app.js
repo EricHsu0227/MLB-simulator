@@ -917,14 +917,37 @@ function actionBar(g, GS) {
   </div></div>`;
 }
 // available substitutes with platoon wOBA; names open the player page (h = handedness faced right now)
+// bullpen role (same roles the AI manager uses) and innings per appearance from the card
+function penRole(T, c) {
+  const d = D.cards[c], R = T.roles || {};
+  if (R.closer === c) return 'Closer';
+  if (R.setup && R.setup.includes(c)) return 'Setup';
+  if (d.GS >= Math.max(3, 0.5 * (d.G || 0))) return 'Starter';
+  if (d.GS >= 3) return 'Swingman';
+  const ipg = ipPerG(d);
+  if (ipg != null && Math.round(ipg * 10) / 10 >= 1.4) return 'Long relief';
+  return 'Middle relief';
+}
+function ipPerG(d) {
+  if (!d || !d.G) return null;
+  const ip = +d.IP || 0, whole = Math.floor(ip), frac = Math.round((ip - whole) * 10);
+  const outs = whole * 3 + (frac >= 1 && frac <= 2 ? frac : 0);   // 45.1 = 45 1/3 innings
+  return outs / 3 / d.G;
+}
+const ipgStr = (d) => { const v = ipPerG(d); return v == null ? '—' : v.toFixed(1); };
+// the next three hitters and which side they bat from against this pitcher (switch hitters shown as S)
+function dueUp(off, pth) {
+  return [0, 1, 2].map(k => { const c = off.lineup[(off.bi + k) % off.lineup.length].cid; const b = D.cards[c].b;
+    return { c, b, eff: b === 'B' ? (pth === 'L' ? 'R' : 'L') : b }; });
+}
 function subTable(T, kind, h) {
   const ids = (kind === 'pen' ? T.pen : T.bench).filter(c => !T.used.has(c)); if (!ids.length) return '';
   const w = (c, x) => { const v = D.cards[c].wo && D.cards[c].wo[x]; return v ? `${avg3(v[0])}<span class="muted"> ${v[1]}</span>` : '—'; };
   const hl = (x) => h === x ? ' class="hot"' : '';
   const pitch = kind === 'pen';
-  const head = pitch ? `<th class="l">Bullpen</th><th>T</th><th>ERA</th><th>SV</th><th${hl('L')}>vs LHB</th><th${hl('R')}>vs RHB</th>` : `<th class="l">${kind === 'bat' ? 'Bench bats' : 'Bench gloves'}</th><th>Pos</th><th>B</th><th${hl('L')}>vs LHP</th><th${hl('R')}>vs RHP</th>`;
+  const head = pitch ? `<th class="l">Bullpen</th><th class="l">Role</th><th>T</th><th>G</th><th>IP/G</th><th>ERA</th><th>SV</th><th${hl('L')}>vs LHB</th><th${hl('R')}>vs RHB</th>` : `<th class="l">${kind === 'bat' ? 'Bench bats' : 'Bench gloves'}</th><th>Pos</th><th>B</th><th${hl('L')}>vs LHP</th><th${hl('R')}>vs RHP</th>`;
   const rows = ids.map(c => { const d = D.cards[c]; return pitch
-    ? `<tr><td class="l">${plink(c)}${T.tired && T.tired.has(c) ? ' <span class="muted">tired</span>' : ''}</td><td>${d.th}</td><td>${d.ERA}</td><td>${d.SV}</td><td>${w(c, 'L')}</td><td>${w(c, 'R')}</td></tr>`
+    ? `<tr><td class="l">${plink(c)}${T.tired && T.tired.has(c) ? ' <span class="muted">tired</span>' : ''}</td><td class="l role">${penRole(T, c)}</td><td>${d.th}</td><td>${d.G}</td><td>${ipgStr(d)}</td><td>${d.ERA}</td><td>${d.SV}</td><td>${w(c, 'L')}</td><td>${w(c, 'R')}</td></tr>`
     : `<tr><td class="l">${plink(c)}</td><td>${d.pos.join('/')}</td><td>${d.b || ''}</td><td>${w(c, 'L')}</td><td>${w(c, 'R')}</td></tr>`; }).join('');
   return `<div class="tablewrap subtab"><table class="mini"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table><div class="muted" style="font-size:11px">wOBA (PA) from the card's real platoon split${h ? ' · highlighted column = current matchup' : ''}. Tap a name for the player page.</div></div>`;
 }
@@ -947,11 +970,12 @@ function managePanel(g, GS) {
   }
   if (defU && !g.over) {
     const side = 1 - g.half;
-    const pen = def.pen.filter(c => !def.used.has(c)).map(c => { const p = D.cards[c]; return `<option value="${c}">${esc(tn(c))} ${p.th}HP · ERA ${p.ERA} · ${p.SV} SV · wOBA L ${woStr(p.wo && p.wo.L)} R ${woStr(p.wo && p.wo.R)}${def.tired && def.tired.has(c) ? ' · tired' : ''}</option>`; }).join('');
+    const pen = def.pen.filter(c => !def.used.has(c)).map(c => { const p = D.cards[c]; return `<option value="${c}">${esc(tn(c))} ${p.th}HP · ${penRole(def, c)} · ${ipgStr(p)} IP/G · ERA ${p.ERA} · wOBA L ${woStr(p.wo && p.wo.L)} R ${woStr(p.wo && p.wo.R)}${def.tired && def.tired.has(c) ? ' · tired' : ''}</option>`; }).join('');
     const dbh = (() => { const bc = g.batterCard(); return bc.b === 'B' ? (D.cards[def.pitcher].th === 'L' ? 'R' : 'L') : bc.b; })();
     const benchOpts = def.bench.filter(c => !def.used.has(c)).map(c => `<option value="${c}">${esc(tn(c))} (${D.cards[c].pos.join('/')}) · wOBA L ${woStr(D.cards[c].wo && D.cards[c].wo.L)} R ${woStr(D.cards[c].wo && D.cards[c].wo.R)}</option>`).join('');
     mgr += `<div class="grp"><span class="eyebrow">${esc(def.abbr)} defense — you</span>${tog('ibb', 'Intentional walk', true)}${tog('infieldIn', 'Infield in', b[2])}
       <button class="btn sm ${def.guardLines ? 'on' : ''}" data-act="dec" data-v="guardLines">Guard the lines</button></div>
+      <div class="dueup"><span class="eyebrow">Due up · ${esc(off.abbr)}</span>${dueUp(off, D.cards[def.pitcher].th).map((x, i) => `<span class="du"><b class="bh bh-${x.eff}">${x.b === 'B' ? 'S' : x.b}</b>${i ? '' : '<span class="muted">now</span> '}${plink(x.c)}</span>`).join('')}<span class="muted du-sum">${dueUp(off, D.cards[def.pitcher].th).map(x => x.eff).join(' ')} vs ${D.cards[def.pitcher].th}HP${dueUp(off, D.cards[def.pitcher].th).some(x => x.b === 'B') ? ' (switch hitters bat opposite the pitcher)' : ''}</span></div>
       <div class="grp"><label class="fld">Bullpen <select id="pensel">${pen}</select></label><button class="btn sm" data-act="pchange" data-side="${side}" ${pen ? '' : 'disabled'}>Change pitcher</button></div>${subTable(def, 'pen', dbh)}
       ${benchOpts ? `<div class="grp"><label class="fld">Replace <select id="phout2">${def.lineup.map(x => `<option value="${x.cid}">${esc(tn(x.cid))} (${x.pos})</option>`).join('')}</select></label><label class="fld">With <select id="phin2">${benchOpts}</select></label>
       <button class="btn sm" data-act="dsub" data-side="${side}">Defensive sub</button></div>${subTable(def, 'bench')}` : ''}`;
